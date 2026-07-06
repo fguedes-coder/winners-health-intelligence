@@ -94,9 +94,11 @@ export async function preverAtualizacaoCampos(
 // Recebe as linhas já normalizadas (do passo de prévia, sem reenviar o
 // arquivo) + quais divergências o usuário aceitou aplicar. Recarrega o
 // master do zero (evita condição de corrida com o que foi previsto) e só
-// então grava: UPDATE dos campos preenchidos/aceitos e INSERT dos "não
-// encontrados". Nunca toca em eventos_utilizacao/faturas — só
-// beneficiarios_master.
+// então grava: UPDATE de CPF/Data de nascimento nos beneficiários já
+// encontrados. NUNCA insere — "não encontrados" ficam só no relatório,
+// nunca viram beneficiário novo. Nunca toca em eventos_utilizacao/faturas,
+// nem em carteirinha/matrícula/plano/empresa/tipo/status — só
+// beneficiarios_master.cpf e beneficiarios_master.data_nascimento.
 export async function confirmarAtualizacaoCampos(
   arquivoNome: string,
   linhas: MasterLinha[],
@@ -112,7 +114,7 @@ export async function confirmarAtualizacaoCampos(
   const qualidadeAntes = medirQualidadeAlvo(masterAntes)
 
   const preview = gerarPreview(linhas, masterAntes)
-  const { atualizacoes, novos } = montarPatches(preview, divergenciasAceitas)
+  const { atualizacoes } = montarPatches(preview, divergenciasAceitas)
 
   const { data: imp, error: impErr } = await supabase
     .from('cadastro_master_importacoes')
@@ -120,8 +122,8 @@ export async function confirmarAtualizacaoCampos(
       arquivo_nome: arquivoNome,
       total_linhas: linhas.length,
       atualizados: atualizacoes.length,
-      novos: novos.length,
-      nao_encontrados: 0,
+      novos: 0,
+      nao_encontrados: preview.naoEncontrados.length,
       duplicidades: preview.conflitos.length,
       qualidade_antes: qualidadeAntes,
     })
@@ -130,13 +132,6 @@ export async function confirmarAtualizacaoCampos(
 
   if (impErr || !imp) {
     return { error: `Erro ao registrar importação: ${impErr?.message ?? 'desconhecido'}` }
-  }
-
-  const CHUNK = 500
-  for (let i = 0; i < novos.length; i += CHUNK) {
-    const lote = novos.slice(i, i + CHUNK).map((r) => ({ ...r, origem_importacao_id: imp.id }))
-    const { error } = await supabase.from('beneficiarios_master').insert(lote)
-    if (error) return { error: `Erro ao inserir novos: ${error.message}` }
   }
 
   for (const u of atualizacoes) {
@@ -158,5 +153,9 @@ export async function confirmarAtualizacaoCampos(
   revalidatePath('/colaboradores')
   revalidatePath('/colaboradores/diagnostico')
 
-  return { atualizados: atualizacoes.length, novos: novos.length, ignorados: preview.conflitos.length }
+  return {
+    atualizados: atualizacoes.length,
+    naoEncontrados: preview.naoEncontrados.length,
+    ignorados: preview.conflitos.length,
+  }
 }

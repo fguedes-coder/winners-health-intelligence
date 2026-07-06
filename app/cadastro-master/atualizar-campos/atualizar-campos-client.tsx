@@ -8,7 +8,7 @@ import {
   FileSpreadsheet,
   Loader2,
   Search,
-  UserPlus,
+  UserX,
 } from 'lucide-react'
 import { Card } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -25,7 +25,7 @@ import { cn } from '@/lib/utils'
 import { preverAtualizacaoCampos, confirmarAtualizacaoCampos } from './actions'
 import {
   LABEL_CAMPO_ATUALIZAVEL,
-  CAMPOS_SUGESTAO_ACEITAR,
+  calcularIdade,
   type CampoAtualizavel,
   type PreverAtualizacaoResult,
   type ConfirmarAtualizacaoResult,
@@ -41,6 +41,14 @@ const LABEL_CAMPO_MATCH: Record<string, string> = {
 
 function fmtNum(n: number) {
   return n.toLocaleString('pt-BR')
+}
+
+// Mostra a idade calculada ao lado da data de nascimento — só exibição,
+// nunca é gravada como campo próprio.
+function sufixoIdade(campo: string, valor: string): string {
+  if (campo !== 'dataNascimento') return ''
+  const idade = calcularIdade(valor)
+  return idade == null ? '' : ` (${idade} anos)`
 }
 
 type Fase = 'upload' | 'conferencia' | 'concluido'
@@ -80,17 +88,9 @@ export function AtualizarCamposClient() {
       }
       setErro(null)
       setDados({ arquivoNome: res.arquivoNome!, linhas: res.linhas, preview: res.preview })
-      // MECSAS é a fonte oficial para alguns campos (ex.: carteirinha) — a
-      // divergência já nasce marcada para aceitar o valor do arquivo; os
-      // demais campos divergentes continuam desmarcados (mantém o atual).
-      const aceitasIniciais: Record<number, CampoAtualizavel[]> = {}
-      for (const item of res.preview.encontrados) {
-        const sugeridos = item.divergencias
-          .map((d) => d.campo)
-          .filter((campo) => CAMPOS_SUGESTAO_ACEITAR.includes(campo))
-        if (sugeridos.length > 0) aceitasIniciais[item.linhaIndex] = sugeridos
-      }
-      setAceitas(aceitasIniciais)
+      // Nenhuma divergência vem pré-marcada — o usuário decide caso a caso
+      // se aceita CPF/Data de nascimento diferentes do que já está gravado.
+      setAceitas({})
       setFase('conferencia')
     })
   }
@@ -136,7 +136,7 @@ export function AtualizarCamposClient() {
         </div>
         <div className="grid gap-3 sm:grid-cols-3">
           <ResumoBox label="Beneficiários atualizados" valor={fmtNum(resultado.atualizados ?? 0)} destaque="success" />
-          <ResumoBox label="Novos beneficiários criados" valor={fmtNum(resultado.novos ?? 0)} destaque="success" />
+          <ResumoBox label="Não encontrados (não criados)" valor={fmtNum(resultado.naoEncontrados ?? 0)} destaque="warning" />
           <ResumoBox label="Ignorados (conflito)" valor={fmtNum(resultado.ignorados ?? 0)} destaque="warning" />
         </div>
         <Button variant="outline" onClick={recomecar}>
@@ -162,8 +162,9 @@ export function AtualizarCamposClient() {
             <p className="text-sm text-muted-foreground">
               Esta tela só compara contra a tabela <code>beneficiarios_master</code>, e ela não tem
               nenhum registro ainda. É por isso que as {fmtNum(preview.total)} linhas apareceram
-              todas como &quot;serão criados&quot;. Se a população de beneficiários já existe em outra
-              tela (ex.: Beneficiários/Colaboradores), é preciso primeiro rodar o{' '}
+              todas como &quot;não encontrados&quot; — esta tela nunca cria beneficiário, só
+              atualiza os já existentes. Se a população de beneficiários já existe em outra tela
+              (ex.: Beneficiários/Colaboradores), é preciso primeiro rodar o{' '}
               <span className="font-medium text-foreground">Cadastro Mestre</span> (
               <code>/cadastro-master/importar</code>) com uma base inicial para popular essa tabela
               — só então esta conferência por planilha MECSAS vai encontrar correspondências.
@@ -174,7 +175,7 @@ export function AtualizarCamposClient() {
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <ResumoBox label="Total de linhas" valor={fmtNum(preview.total)} />
           <ResumoBox label="Encontrados" valor={fmtNum(preview.encontrados.length)} destaque="success" />
-          <ResumoBox label="Serão criados (não encontrados)" valor={fmtNum(preview.naoEncontrados.length)} destaque="warning" />
+          <ResumoBox label="Não encontrados (não criados)" valor={fmtNum(preview.naoEncontrados.length)} destaque="warning" />
           <ResumoBox label="Ignorados (conflito)" valor={fmtNum(preview.conflitos.length)} destaque="destructive" />
         </div>
 
@@ -197,17 +198,15 @@ export function AtualizarCamposClient() {
             Beneficiários encontrados ({fmtNum(preview.encontrados.length)})
           </h3>
           <p className="text-sm text-muted-foreground">
-            Campos vazios listados aqui são preenchidos automaticamente ao confirmar.
+            Esta tela atualiza só <span className="font-medium text-foreground">CPF</span> e{' '}
+            <span className="font-medium text-foreground">Data de nascimento</span>. Carteirinha,
+            matrícula, plano, empresa/filial, tipo e status já existem na base e nunca são
+            alterados aqui, mesmo quando o beneficiário é localizado pela carteirinha.
             {totalDivergencias > 0 && (
               <>
                 {' '}
                 Divergências (campo já preenchido com valor diferente) exigem que você marque
-                quais aceitar — as não marcadas mantêm o valor atual.{' '}
-                <span className="font-medium text-foreground">
-                  Carteirinha já vem marcada por padrão
-                </span>{' '}
-                (o MECSAS é a fonte oficial para esse campo) — desmarque se quiser manter o
-                número atual.
+                quais aceitar — as não marcadas mantêm o valor atual.
               </>
             )}
           </p>
@@ -227,6 +226,7 @@ export function AtualizarCamposClient() {
                       {item.preenchimentos.map((p) => (
                         <Badge key={p.campo} variant="success">
                           {LABEL_CAMPO_ATUALIZAVEL[p.campo]}: {p.valorNovo}
+                          {sufixoIdade(p.campo, p.valorNovo)}
                         </Badge>
                       ))}
                     </div>
@@ -253,6 +253,7 @@ export function AtualizarCamposClient() {
                             <span className="text-muted-foreground">→</span>
                             <span className={cn(marcada ? 'text-success font-medium' : 'text-muted-foreground')}>
                               {d.valorNovo}
+                              {sufixoIdade(d.campo, d.valorNovo)}
                             </span>
                           </label>
                         )
@@ -273,11 +274,16 @@ export function AtualizarCamposClient() {
         {preview.naoEncontrados.length > 0 && (
           <Card className="gap-4 p-6">
             <div className="flex items-center gap-2">
-              <UserPlus className="size-4.5 text-warning" />
+              <UserX className="size-4.5 text-warning" />
               <h3 className="text-base font-semibold text-foreground">
-                Serão criados como novos beneficiários ({fmtNum(preview.naoEncontrados.length)})
+                Não encontrados — não serão criados ({fmtNum(preview.naoEncontrados.length)})
               </h3>
             </div>
+            <p className="text-sm text-muted-foreground">
+              Esta tela nunca cria beneficiário novo. Estas linhas não bateram com nenhum
+              registro existente por carteirinha, CPF, matrícula ou nome — ficam só listadas
+              aqui para revisão manual.
+            </p>
             <Table>
               <TableHeader>
                 <TableRow>
@@ -337,8 +343,8 @@ export function AtualizarCamposClient() {
               </>
             ) : (
               <>
-                <CheckCircle2 className="size-4" /> Confirmar e salvar ({fmtNum(preview.encontrados.length)}{' '}
-                atualizações, {fmtNum(preview.naoEncontrados.length)} novos)
+                <CheckCircle2 className="size-4" /> Confirmar e atualizar ({fmtNum(preview.encontrados.length)}{' '}
+                registros — nenhum novo beneficiário)
               </>
             )}
           </Button>
@@ -353,16 +359,19 @@ export function AtualizarCamposClient() {
       <div className="flex flex-col gap-1">
         <h2 className="text-lg font-semibold text-foreground">Atualizar cadastro por planilha</h2>
         <p className="text-sm text-muted-foreground">
-          Envie uma planilha (Nome, CPF, Carteirinha, Matrícula, Data de nascimento, Sexo,
-          Empresa/filial, Data de admissão, Data de adesão, Plano, Tipo). O sistema casa cada
-          linha principalmente pela <span className="font-medium text-foreground">carteirinha</span>{' '}
-          (padrão confirmado: MECSAS = prefixo &quot;567&quot; + carteirinha base de 16 dígitos +
-          1 dígito verificador final — o sistema tenta o valor completo, sem o prefixo, sem o
-          prefixo e sem o dígito final, e os 16 dígitos antes do dígito final), depois por CPF,
-          Matrícula ou Nome — e mostra uma prévia. {' '}
-          <span className="font-medium text-foreground">Nada é gravado até você confirmar</span>.
-          Só preenche campos vazios; divergências (campo já preenchido com valor diferente)
-          precisam da sua aprovação explícita.
+          Envie a planilha MECSAS. O sistema localiza cada beneficiário principalmente pela{' '}
+          <span className="font-medium text-foreground">carteirinha</span> (padrão confirmado:
+          MECSAS = prefixo &quot;567&quot; + carteirinha base de 16 dígitos + 1 dígito verificador
+          final — o sistema tenta o valor completo, sem o prefixo, sem o prefixo e sem o dígito
+          final, e os 16 dígitos antes do dígito final), depois por CPF, Matrícula ou Nome. {' '}
+          <span className="font-medium text-foreground">
+            Atualiza somente CPF e Data de nascimento
+          </span>{' '}
+          do registro já existente — carteirinha, matrícula, plano, empresa/filial, tipo e status
+          nunca são alterados, e{' '}
+          <span className="font-medium text-foreground">nenhum beneficiário novo é criado</span>.
+          Quem não for encontrado fica listado para revisão, sem gerar cadastro. Mostra uma prévia
+          antes; nada é gravado até você confirmar.
         </p>
       </div>
 

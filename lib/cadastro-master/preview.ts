@@ -32,42 +32,19 @@ export type MasterRowDB = {
 }
 
 // Campos rastreados para preenchimento/divergência nesta rotina de
-// atualização (não inclui nome/email/telefone/status/competencia — esses
-// continuam só no fluxo normal do Cadastro Mestre). Carteirinha entrou aqui
-// porque o CSV MECSAS é tratado como fonte oficial: quando um beneficiário é
-// casado (por CPF, carteirinha antiga ou nome normalizado) e o MECSAS traz um
-// número de carteirinha diferente do já cadastrado, isso precisa aparecer
-// como algo a atualizar, não ser ignorado silenciosamente.
-export type CampoAtualizavel =
-  | 'cpf'
-  | 'carteirinha'
-  | 'sexo'
-  | 'dataNascimento'
-  | 'matricula'
-  | 'empresa'
-  | 'dataAdmissao'
-  | 'dataAdesao'
-  | 'plano'
-  | 'tipo'
+// atualização. Escopo deliberadamente restrito: esta tela só usa o MECSAS
+// para complementar CPF e Data de nascimento. Carteirinha, matrícula, plano,
+// empresa/filial, tipo e status já existem na base e nunca são alterados
+// por aqui — mesmo quando o beneficiário é encontrado pela carteirinha
+// reduzida (o match usa a carteirinha só para localizar o registro, nunca
+// para sobrescrevê-la).
+export type CampoAtualizavel = 'cpf' | 'dataNascimento'
 
 export type CampoMatch = 'cpf' | 'carteirinha' | 'matricula' | 'nome'
 
-// Campos cuja divergência deve vir com a sugestão padrão já marcada para
-// aceitar o valor do arquivo (MECSAS é a fonte oficial para eles). Os demais
-// campos divergentes continuam com sugestão padrão de manter o valor atual.
-export const CAMPOS_SUGESTAO_ACEITAR: CampoAtualizavel[] = ['carteirinha']
-
 export const CAMPOS_ALVO: { chave: CampoAtualizavel; col: keyof MasterRowDB; label: string }[] = [
   { chave: 'cpf', col: 'cpf', label: 'CPF' },
-  { chave: 'carteirinha', col: 'carteirinha', label: 'Carteirinha' },
   { chave: 'dataNascimento', col: 'data_nascimento', label: 'Data de nascimento' },
-  { chave: 'sexo', col: 'sexo', label: 'Sexo' },
-  { chave: 'matricula', col: 'matricula', label: 'Matrícula' },
-  { chave: 'empresa', col: 'empresa', label: 'Empresa/filial' },
-  { chave: 'dataAdmissao', col: 'data_admissao', label: 'Data de admissão' },
-  { chave: 'dataAdesao', col: 'data_adesao', label: 'Data de adesão' },
-  { chave: 'plano', col: 'plano', label: 'Plano' },
-  { chave: 'tipo', col: 'tipo', label: 'Tipo (titular/dependente)' },
 ]
 
 export const LABEL_CAMPO_ATUALIZAVEL: Record<CampoAtualizavel, string> = Object.fromEntries(
@@ -120,12 +97,41 @@ export type PreverAtualizacaoResult = {
 export type ConfirmarAtualizacaoResult = {
   error?: string
   atualizados?: number
-  novos?: number
+  naoEncontrados?: number
   ignorados?: number
 }
 
 function vazio(v: string | null | undefined): boolean {
   return v == null || String(v).trim() === ''
+}
+
+// Converte "AAAAMMDD" (formato de data do MECSAS) para "YYYY-MM-DD" (formato
+// esperado pela coluna data_nascimento). Se o valor não tiver exatamente 8
+// dígitos, devolve como veio em vez de travar a conferência por um formato
+// inesperado.
+function converterDataNascimento(valor: string): string {
+  const digitos = valor.replace(/\D/g, '')
+  if (digitos.length !== 8) return valor
+  const ano = digitos.slice(0, 4)
+  const mes = digitos.slice(4, 6)
+  const dia = digitos.slice(6, 8)
+  return `${ano}-${mes}-${dia}`
+}
+
+// Calcula a idade (em anos completos) a partir de uma data "YYYY-MM-DD".
+// Uso só para exibição — nunca é gravada como coluna própria.
+export function calcularIdade(dataNascimentoIso: string): number | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dataNascimentoIso)
+  if (!m) return null
+  const nascimento = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]))
+  if (Number.isNaN(nascimento.getTime())) return null
+  const hoje = new Date()
+  let idade = hoje.getFullYear() - nascimento.getFullYear()
+  const aindaNaoFezAniversario =
+    hoje.getMonth() < nascimento.getMonth() ||
+    (hoje.getMonth() === nascimento.getMonth() && hoje.getDate() < nascimento.getDate())
+  if (aindaNaoFezAniversario) idade--
+  return idade
 }
 
 // Padrão real confirmado: MECSAS = "567" + carteirinha_base (16 dígitos) +
@@ -263,8 +269,9 @@ export function gerarPreview(
     const preenchimentos: CampoPreenchido[] = []
     const divergencias: CampoDivergente[] = []
     for (const { chave, col } of CAMPOS_ALVO) {
-      const novo = linha[chave]
+      let novo = linha[chave]
       if (vazio(novo)) continue
+      if (chave === 'dataNascimento') novo = converterDataNascimento(novo as string)
       const atual = alvo[col] as string | null
       if (vazio(atual)) {
         preenchimentos.push({ campo: chave, valorNovo: novo as string })
@@ -287,29 +294,6 @@ export function gerarPreview(
   return { total: linhas.length, encontrados, naoEncontrados, conflitos }
 }
 
-// Converte uma MasterLinha completa em colunas do banco (para INSERT de
-// "não encontrados" — mesmo formato usado pelo Cadastro Mestre existente).
-export function linhaParaColunas(l: MasterLinha) {
-  return {
-    carteirinha: l.carteirinha,
-    matricula: l.matricula,
-    cpf: l.cpf,
-    nome: l.nome,
-    nome_norm: l.nomeNorm,
-    tipo: l.tipo,
-    sexo: l.sexo,
-    data_nascimento: l.dataNascimento,
-    plano: l.plano,
-    empresa: l.empresa,
-    data_adesao: l.dataAdesao,
-    data_admissao: l.dataAdmissao,
-    email: l.email,
-    telefone: l.telefone,
-    status: l.status,
-    competencia: l.competencia,
-  }
-}
-
 export type QualidadeCampoAlvo = { chave: CampoAtualizavel; label: string; preenchidos: number; pct: number }
 export type QualidadeSnapshotAlvo = { total: number; campos: QualidadeCampoAlvo[]; mediaGeral: number }
 
@@ -325,15 +309,16 @@ export function medirQualidadeAlvo(rows: MasterRowDB[]): QualidadeSnapshotAlvo {
   return { total, campos, mediaGeral }
 }
 
-// Monta os patches de UPDATE (preenchimentos sempre + divergências só as
-// aceitas explicitamente pelo usuário) e a lista de INSERTs para "não
-// encontrados". Não grava nada — só monta a estrutura para quem chamar gravar.
+// Monta só os patches de UPDATE (preenchimentos sempre + divergências só as
+// aceitas explicitamente pelo usuário) para os beneficiários já encontrados.
+// Esta rotina NUNCA cria beneficiário novo — "não encontrados" são só
+// reportados (ver ItemPreviewNaoEncontrado), nunca viram INSERT. Não grava
+// nada — só monta a estrutura para quem chamar gravar.
 export function montarPatches(
   preview: PreviewAtualizacao,
   divergenciasAceitas: Record<number, CampoAtualizavel[]>,
 ): {
   atualizacoes: { id: string; patch: Record<string, string> }[]
-  novos: ReturnType<typeof linhaParaColunas>[]
 } {
   const colByChave = Object.fromEntries(
     CAMPOS_ALVO.map((c) => [c.chave, c.col as string]),
@@ -352,7 +337,5 @@ export function montarPatches(
     }
   }
 
-  const novos = preview.naoEncontrados.map((n) => linhaParaColunas(n.linha))
-
-  return { atualizacoes, novos }
+  return { atualizacoes }
 }
