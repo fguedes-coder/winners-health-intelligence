@@ -111,6 +111,10 @@ export type PreverAtualizacaoResult = {
   linhas?: MasterLinha[]
   preview?: PreviewAtualizacao
   diagnostico?: DiagnosticoPlanilha
+  // Quantos beneficiários existem hoje em beneficiarios_master — se vier 0,
+  // é por isso que nada casa: essa tabela ainda não foi populada (rodar o
+  // Cadastro Mestre original primeiro).
+  totalBeneficiariosMaster?: number
 }
 
 export type ConfirmarAtualizacaoResult = {

@@ -23,6 +23,32 @@ function parseArquivo(buf: Buffer): { linhas: MasterLinha[]; diagnostico: Diagno
   return lerPlanilhaMaster(wb)
 }
 
+// Carrega beneficiarios_master inteiro, paginado (o Supabase limita 1000
+// linhas por chamada — sem paginar, tabelas maiores que isso ficariam
+// truncadas silenciosamente). Loga erro em vez de engolir silenciosamente.
+async function carregarMasterCompleto(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+): Promise<MasterRowDB[]> {
+  const out: MasterRowDB[] = []
+  const PAGE = 1000
+  let from = 0
+  for (;;) {
+    const { data, error } = await supabase
+      .from('beneficiarios_master')
+      .select(COLS)
+      .range(from, from + PAGE - 1)
+    if (error) {
+      console.log('[atualizar-campos] erro ao carregar beneficiarios_master:', error.message)
+      break
+    }
+    if (!data || data.length === 0) break
+    out.push(...(data as MasterRowDB[]))
+    if (data.length < PAGE) break
+    from += PAGE
+  }
+  return out
+}
+
 // Só leitura: parseia o arquivo, carrega o master atual (SELECT) e monta o
 // relatório de conferência. Nenhum INSERT/UPDATE acontece aqui.
 export async function preverAtualizacaoCampos(
@@ -52,12 +78,17 @@ export async function preverAtualizacaoCampos(
   }
 
   const supabase = await createClient()
-  const { data } = await supabase.from('beneficiarios_master').select(COLS)
-  const master = (data ?? []) as MasterRowDB[]
+  const master = await carregarMasterCompleto(supabase)
 
   const preview = gerarPreview(linhas, master)
 
-  return { arquivoNome: file.name, linhas, preview, diagnostico }
+  return {
+    arquivoNome: file.name,
+    linhas,
+    preview,
+    diagnostico,
+    totalBeneficiariosMaster: master.length,
+  }
 }
 
 // Recebe as linhas já normalizadas (do passo de prévia, sem reenviar o
@@ -77,8 +108,7 @@ export async function confirmarAtualizacaoCampos(
 
   const supabase = await createClient()
 
-  const { data: antesData } = await supabase.from('beneficiarios_master').select(COLS)
-  const masterAntes = (antesData ?? []) as MasterRowDB[]
+  const masterAntes = await carregarMasterCompleto(supabase)
   const qualidadeAntes = medirQualidadeAlvo(masterAntes)
 
   const preview = gerarPreview(linhas, masterAntes)
@@ -117,8 +147,8 @@ export async function confirmarAtualizacaoCampos(
     if (error) return { error: `Erro ao atualizar: ${error.message}` }
   }
 
-  const { data: depoisData } = await supabase.from('beneficiarios_master').select(COLS)
-  const qualidadeDepois = medirQualidadeAlvo((depoisData ?? []) as MasterRowDB[])
+  const depoisData = await carregarMasterCompleto(supabase)
+  const qualidadeDepois = medirQualidadeAlvo(depoisData)
   await supabase
     .from('cadastro_master_importacoes')
     .update({ qualidade_depois: qualidadeDepois })

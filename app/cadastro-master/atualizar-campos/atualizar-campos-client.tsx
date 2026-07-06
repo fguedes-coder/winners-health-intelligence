@@ -56,6 +56,7 @@ export function AtualizarCamposClient() {
   const [aceitas, setAceitas] = useState<Record<number, CampoAtualizavel[]>>({})
   const [resultado, setResultado] = useState<ConfirmarAtualizacaoResult | null>(null)
   const [diagnostico, setDiagnostico] = useState<DiagnosticoPlanilha | null>(null)
+  const [totalMaster, setTotalMaster] = useState<number | null>(null)
 
   function handleFiles(files: FileList | null) {
     const f = files?.[0]
@@ -72,6 +73,7 @@ export function AtualizarCamposClient() {
     startPreview(async () => {
       const res = await preverAtualizacaoCampos(fd)
       setDiagnostico(res.diagnostico ?? null)
+      setTotalMaster(res.totalBeneficiariosMaster ?? null)
       if (res.error || !res.preview || !res.linhas) {
         setErro(res.error ?? 'Falha ao gerar a prévia.')
         return
@@ -121,6 +123,7 @@ export function AtualizarCamposClient() {
     setResultado(null)
     setErro(null)
     setDiagnostico(null)
+    setTotalMaster(null)
     setFase('upload')
   }
 
@@ -148,12 +151,38 @@ export function AtualizarCamposClient() {
     const totalDivergencias = preview.encontrados.reduce((s, i) => s + i.divergencias.length, 0)
     return (
       <div className="flex flex-col gap-6">
+        {totalMaster === 0 && (
+          <Card className="border-destructive/40 bg-destructive/5 gap-2 p-5">
+            <div className="flex items-center gap-2">
+              <AlertTriangle className="size-4.5 text-destructive" />
+              <p className="text-sm font-semibold text-destructive">
+                O Cadastro Mestre (beneficiarios_master) está vazio — por isso nada casou
+              </p>
+            </div>
+            <p className="text-sm text-muted-foreground">
+              Esta tela só compara contra a tabela <code>beneficiarios_master</code>, e ela não tem
+              nenhum registro ainda. É por isso que as {fmtNum(preview.total)} linhas apareceram
+              todas como &quot;serão criados&quot;. Se a população de beneficiários já existe em outra
+              tela (ex.: Beneficiários/Colaboradores), é preciso primeiro rodar o{' '}
+              <span className="font-medium text-foreground">Cadastro Mestre</span> (
+              <code>/cadastro-master/importar</code>) com uma base inicial para popular essa tabela
+              — só então esta conferência por planilha MECSAS vai encontrar correspondências.
+            </p>
+          </Card>
+        )}
+
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <ResumoBox label="Total de linhas" valor={fmtNum(preview.total)} />
           <ResumoBox label="Encontrados" valor={fmtNum(preview.encontrados.length)} destaque="success" />
           <ResumoBox label="Serão criados (não encontrados)" valor={fmtNum(preview.naoEncontrados.length)} destaque="warning" />
           <ResumoBox label="Ignorados (conflito)" valor={fmtNum(preview.conflitos.length)} destaque="destructive" />
         </div>
+
+        {totalMaster != null && (
+          <p className="text-xs text-muted-foreground">
+            Comparado contra {fmtNum(totalMaster)} beneficiário(s) hoje em beneficiarios_master.
+          </p>
+        )}
 
         {erro && (
           <Card className="border-destructive/40 bg-destructive/5 p-5">
