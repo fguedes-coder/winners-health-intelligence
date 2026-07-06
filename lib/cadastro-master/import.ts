@@ -12,8 +12,7 @@ import 'server-only'
 import * as XLSX from 'xlsx'
 import { createClient } from '@/lib/supabase/server'
 import {
-  mapearLinhaMaster,
-  normalizarLinhaMaster,
+  lerPlanilhaMaster,
   CAMPOS_QUALIDADE,
   type MasterLinha,
 } from './parse'
@@ -108,41 +107,6 @@ function medirQualidade(rows: Pick<MasterRow, keyof MasterRow>[]): QualidadeSnap
   return { total, campos, mediaGeral }
 }
 
-// Escolhe a planilha com dados de beneficiários (cabeçalho com nome/carteirinha/cpf).
-function escolherLinhas(wb: XLSX.WorkBook): Record<string, unknown>[] {
-  const temChaves = (rows: Record<string, unknown>[]) => {
-    if (rows.length === 0) return false
-    const headers = Object.keys(rows[0]).map((h) =>
-      h
-        .normalize('NFD')
-        .replace(/[\u0300-\u036f]/g, '')
-        .toLowerCase(),
-    )
-    return headers.some(
-      (h) =>
-        h.includes('nome') ||
-        h.includes('cpf') ||
-        h.includes('carteir') ||
-        h.includes('matricula'),
-    )
-  }
-  for (const nome of wb.SheetNames) {
-    const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(wb.Sheets[nome], {
-      defval: null,
-      raw: false,
-    })
-    if (temChaves(rows)) return rows
-  }
-  for (const nome of wb.SheetNames) {
-    const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(wb.Sheets[nome], {
-      defval: null,
-      raw: false,
-    })
-    if (rows.length > 0) return rows
-  }
-  return []
-}
-
 // Converte a linha canônica do parser para o formato de coluna do banco.
 function paraColunas(l: MasterLinha) {
   return {
@@ -172,15 +136,13 @@ export async function importarCadastroMaster(
     return { error: 'Selecione um arquivo CSV ou XLSX.' }
   }
 
-  // 1) Parse do arquivo.
+  // 1) Parse do arquivo (detecta aba e linha de cabeçalho automaticamente —
+  // ver lerPlanilhaMaster em ./parse).
   let linhas: MasterLinha[]
   try {
     const buf = Buffer.from(await file.arrayBuffer())
     const wb = XLSX.read(buf, { type: 'buffer' })
-    const rows = escolherLinhas(wb)
-    linhas = rows
-      .map((r) => normalizarLinhaMaster(mapearLinhaMaster(r)))
-      .filter((l): l is MasterLinha => l !== null)
+    linhas = lerPlanilhaMaster(wb).linhas
   } catch (e) {
     return { error: `Falha ao ler o arquivo: ${(e as Error).message}` }
   }
