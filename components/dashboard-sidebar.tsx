@@ -16,6 +16,7 @@ import {
   ShieldCheck,
   Stethoscope,
   Upload,
+  UserCheck,
   Users,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
@@ -37,6 +38,12 @@ const navItems: {
     label: 'Cadastro Mestre',
     href: '/cadastro-master/importar',
     icon: Database,
+    badge: 'Novo',
+  },
+  {
+    label: 'Conferência RH',
+    href: '/rh-importacao',
+    icon: UserCheck,
     badge: 'Novo',
   },
   {

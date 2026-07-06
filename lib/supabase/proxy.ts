@@ -19,6 +19,7 @@ const PROTECTED_PREFIXES = [
   '/winners-decide',
   '/beneficiario',
   '/api/winners-decide',
+  '/rh-importacao',
 ]
 
 export async function updateSession(request: NextRequest) {
