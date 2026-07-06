@@ -124,6 +124,18 @@ function vazio(v: string | null | undefined): boolean {
   return v == null || String(v).trim() === ''
 }
 
+// A base histórica de beneficiários guarda a carteirinha SEM o prefixo "567"
+// (código de operadora/plano); o MECSAS traz sempre a carteirinha completa,
+// com esse prefixo. Para casar um beneficiário já cadastrado, tenta-se a
+// carteirinha do MECSAS como veio e, se não achar, removendo o prefixo.
+const PREFIXO_CARTEIRINHA_MECSAS = '567'
+
+function semPrefixoMecsas(carteirinha: string): string | null {
+  return carteirinha.startsWith(PREFIXO_CARTEIRINHA_MECSAS)
+    ? carteirinha.slice(PREFIXO_CARTEIRINHA_MECSAS.length)
+    : null
+}
+
 // Identidade da linha dentro do próprio arquivo, para detectar duplicidade
 // de upload (mesmo padrão do importarCadastroMaster existente).
 function chaveIdentidade(l: MasterLinha): string {
@@ -133,7 +145,9 @@ function chaveIdentidade(l: MasterLinha): string {
   return `nome:${l.nomeNorm}`
 }
 
-const PRIORIDADE: CampoMatch[] = ['cpf', 'carteirinha', 'matricula', 'nome']
+// Carteirinha é o método de matching principal (o MECSAS traz o número
+// completo e oficial); CPF/Matrícula/Nome continuam como reforço/fallback.
+const PRIORIDADE: CampoMatch[] = ['carteirinha', 'cpf', 'matricula', 'nome']
 
 // Gera o relatório de conferência (nenhuma escrita — só leitura/comparação).
 export function gerarPreview(
@@ -179,7 +193,13 @@ export function gerarPreview(
     }
     if (linha.carteirinha) {
       const hit = byCarteirinha.get(linha.carteirinha)
-      if (hit) candidatos.push({ campo: 'carteirinha', row: hit })
+      if (hit) {
+        candidatos.push({ campo: 'carteirinha', row: hit })
+      } else {
+        const reduzida = semPrefixoMecsas(linha.carteirinha)
+        const hitReduzida = reduzida ? byCarteirinha.get(reduzida) : undefined
+        if (hitReduzida) candidatos.push({ campo: 'carteirinha', row: hitReduzida })
+      }
     }
     if (linha.matricula) {
       const hit = byMatricula.get(linha.matricula)
