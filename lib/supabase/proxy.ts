@@ -10,6 +10,15 @@ const PROTECTED_PREFIXES = [
   '/uploads',
   '/relatorios',
   '/configuracoes',
+  '/utilizacao',
+  '/colaboradores',
+  '/cadastro-master',
+  '/jornada-assistencial',
+  '/radar-risco',
+  '/people-analytics',
+  '/winners-decide',
+  '/beneficiario',
+  '/api/winners-decide',
 ]
 
 export async function updateSession(request: NextRequest) {
