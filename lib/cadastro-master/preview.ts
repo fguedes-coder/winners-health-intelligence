@@ -31,11 +31,16 @@ export type MasterRowDB = {
   competencia: string | null
 }
 
-// Somente os campos pedidos para esta rotina de atualização (não inclui
-// nome/carteirinha/email/telefone/status/competencia — esses continuam
-// só no fluxo normal do Cadastro Mestre).
+// Campos rastreados para preenchimento/divergência nesta rotina de
+// atualização (não inclui nome/email/telefone/status/competencia — esses
+// continuam só no fluxo normal do Cadastro Mestre). Carteirinha entrou aqui
+// porque o CSV MECSAS é tratado como fonte oficial: quando um beneficiário é
+// casado (por CPF, carteirinha antiga ou nome normalizado) e o MECSAS traz um
+// número de carteirinha diferente do já cadastrado, isso precisa aparecer
+// como algo a atualizar, não ser ignorado silenciosamente.
 export type CampoAtualizavel =
   | 'cpf'
+  | 'carteirinha'
   | 'sexo'
   | 'dataNascimento'
   | 'matricula'
@@ -47,8 +52,14 @@ export type CampoAtualizavel =
 
 export type CampoMatch = 'cpf' | 'carteirinha' | 'matricula' | 'nome'
 
+// Campos cuja divergência deve vir com a sugestão padrão já marcada para
+// aceitar o valor do arquivo (MECSAS é a fonte oficial para eles). Os demais
+// campos divergentes continuam com sugestão padrão de manter o valor atual.
+export const CAMPOS_SUGESTAO_ACEITAR: CampoAtualizavel[] = ['carteirinha']
+
 export const CAMPOS_ALVO: { chave: CampoAtualizavel; col: keyof MasterRowDB; label: string }[] = [
   { chave: 'cpf', col: 'cpf', label: 'CPF' },
+  { chave: 'carteirinha', col: 'carteirinha', label: 'Carteirinha' },
   { chave: 'dataNascimento', col: 'data_nascimento', label: 'Data de nascimento' },
   { chave: 'sexo', col: 'sexo', label: 'Sexo' },
   { chave: 'matricula', col: 'matricula', label: 'Matrícula' },

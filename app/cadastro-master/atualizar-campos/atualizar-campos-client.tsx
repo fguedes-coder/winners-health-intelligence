@@ -25,6 +25,7 @@ import { cn } from '@/lib/utils'
 import { preverAtualizacaoCampos, confirmarAtualizacaoCampos } from './actions'
 import {
   LABEL_CAMPO_ATUALIZAVEL,
+  CAMPOS_SUGESTAO_ACEITAR,
   type CampoAtualizavel,
   type PreverAtualizacaoResult,
   type ConfirmarAtualizacaoResult,
@@ -77,7 +78,17 @@ export function AtualizarCamposClient() {
       }
       setErro(null)
       setDados({ arquivoNome: res.arquivoNome!, linhas: res.linhas, preview: res.preview })
-      setAceitas({})
+      // MECSAS é a fonte oficial para alguns campos (ex.: carteirinha) — a
+      // divergência já nasce marcada para aceitar o valor do arquivo; os
+      // demais campos divergentes continuam desmarcados (mantém o atual).
+      const aceitasIniciais: Record<number, CampoAtualizavel[]> = {}
+      for (const item of res.preview.encontrados) {
+        const sugeridos = item.divergencias
+          .map((d) => d.campo)
+          .filter((campo) => CAMPOS_SUGESTAO_ACEITAR.includes(campo))
+        if (sugeridos.length > 0) aceitasIniciais[item.linhaIndex] = sugeridos
+      }
+      setAceitas(aceitasIniciais)
       setFase('conferencia')
     })
   }
@@ -162,7 +173,12 @@ export function AtualizarCamposClient() {
               <>
                 {' '}
                 Divergências (campo já preenchido com valor diferente) exigem que você marque
-                quais aceitar — as não marcadas mantêm o valor atual.
+                quais aceitar — as não marcadas mantêm o valor atual.{' '}
+                <span className="font-medium text-foreground">
+                  Carteirinha já vem marcada por padrão
+                </span>{' '}
+                (o MECSAS é a fonte oficial para esse campo) — desmarque se quiser manter o
+                número atual.
               </>
             )}
           </p>
