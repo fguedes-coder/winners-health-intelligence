@@ -8,6 +8,7 @@ import {
   Brain,
   Contact,
   Database,
+  FileCheck2,
   FileText,
   HeartPulse,
   LayoutDashboard,
@@ -37,6 +38,12 @@ const navItems: {
     label: 'Cadastro Mestre',
     href: '/cadastro-master/importar',
     icon: Database,
+    badge: 'Novo',
+  },
+  {
+    label: 'Atualizar Cadastro',
+    href: '/cadastro-master/atualizar-campos',
+    icon: FileCheck2,
     badge: 'Novo',
   },
   {
