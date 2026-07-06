@@ -3,8 +3,8 @@
 import * as XLSX from 'xlsx'
 import { revalidatePath } from 'next/cache'
 import { createClient } from '@/lib/supabase/server'
-import { mapearLinhaMaster, normalizarLinhaMaster } from '@/lib/cadastro-master/parse'
-import type { MasterLinha } from '@/lib/cadastro-master/parse'
+import { lerPlanilhaMaster } from '@/lib/cadastro-master/parse'
+import type { MasterLinha, DiagnosticoPlanilha } from '@/lib/cadastro-master/parse'
 import {
   gerarPreview,
   montarPatches,
@@ -18,34 +18,9 @@ import {
 const COLS =
   'id, carteirinha, matricula, cpf, nome, nome_norm, tipo, sexo, data_nascimento, plano, empresa, data_adesao, data_admissao, email, telefone, status, competencia'
 
-// Escolhe a planilha com dados de beneficiários (mesmo critério do Cadastro Mestre).
-function escolherLinhas(wb: XLSX.WorkBook): Record<string, unknown>[] {
-  const temChaves = (rows: Record<string, unknown>[]) => {
-    if (rows.length === 0) return false
-    const headers = Object.keys(rows[0]).map((h) =>
-      h.normalize('NFD').replace(new RegExp('[\\u0300-\\u036f]', 'g'), '').toLowerCase(),
-    )
-    return headers.some(
-      (h) => h.includes('nome') || h.includes('cpf') || h.includes('carteir') || h.includes('matricula'),
-    )
-  }
-  for (const nome of wb.SheetNames) {
-    const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(wb.Sheets[nome], { defval: null, raw: false })
-    if (temChaves(rows)) return rows
-  }
-  for (const nome of wb.SheetNames) {
-    const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(wb.Sheets[nome], { defval: null, raw: false })
-    if (rows.length > 0) return rows
-  }
-  return []
-}
-
-function parseArquivo(buf: Buffer): MasterLinha[] {
+function parseArquivo(buf: Buffer): { linhas: MasterLinha[]; diagnostico: DiagnosticoPlanilha } {
   const wb = XLSX.read(buf, { type: 'buffer' })
-  const rows = escolherLinhas(wb)
-  return rows
-    .map((r) => normalizarLinhaMaster(mapearLinhaMaster(r)))
-    .filter((l): l is MasterLinha => l !== null)
+  return lerPlanilhaMaster(wb)
 }
 
 // Só leitura: parseia o arquivo, carrega o master atual (SELECT) e monta o
@@ -59,15 +34,20 @@ export async function preverAtualizacaoCampos(
   }
 
   let linhas: MasterLinha[]
+  let diagnostico: DiagnosticoPlanilha
   try {
     const buf = Buffer.from(await file.arrayBuffer())
-    linhas = parseArquivo(buf)
+    const lido = parseArquivo(buf)
+    linhas = lido.linhas
+    diagnostico = lido.diagnostico
   } catch (e) {
     return { error: `Falha ao ler o arquivo: ${(e as Error).message}` }
   }
   if (linhas.length === 0) {
     return {
-      error: 'Nenhum beneficiário reconhecido. Confira se há colunas como Nome, CPF, Carteirinha ou Matrícula.',
+      error:
+        'Nenhum beneficiário reconhecido. Confira o diagnóstico abaixo — aba, linha de cabeçalho e colunas detectadas.',
+      diagnostico,
     }
   }
 
@@ -77,7 +57,7 @@ export async function preverAtualizacaoCampos(
 
   const preview = gerarPreview(linhas, master)
 
-  return { arquivoNome: file.name, linhas, preview }
+  return { arquivoNome: file.name, linhas, preview, diagnostico }
 }
 
 // Recebe as linhas já normalizadas (do passo de prévia, sem reenviar o

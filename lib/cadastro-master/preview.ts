@@ -9,7 +9,7 @@
 // explícita do usuário.
 // ===========================================================================
 
-import type { MasterLinha } from './parse'
+import type { MasterLinha, DiagnosticoPlanilha } from './parse'
 
 export type MasterRowDB = {
   id: string
@@ -99,6 +99,7 @@ export type PreverAtualizacaoResult = {
   arquivoNome?: string
   linhas?: MasterLinha[]
   preview?: PreviewAtualizacao
+  diagnostico?: DiagnosticoPlanilha
 }
 
 export type ConfirmarAtualizacaoResult = {

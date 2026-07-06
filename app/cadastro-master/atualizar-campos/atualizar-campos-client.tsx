@@ -7,6 +7,7 @@ import {
   CloudUpload,
   FileSpreadsheet,
   Loader2,
+  Search,
   UserPlus,
 } from 'lucide-react'
 import { Card } from '@/components/ui/card'
@@ -28,7 +29,7 @@ import {
   type PreverAtualizacaoResult,
   type ConfirmarAtualizacaoResult,
 } from '@/lib/cadastro-master/preview'
-import type { MasterLinha } from '@/lib/cadastro-master/parse'
+import type { MasterLinha, DiagnosticoPlanilha } from '@/lib/cadastro-master/parse'
 
 const LABEL_CAMPO_MATCH: Record<string, string> = {
   cpf: 'CPF',
@@ -53,6 +54,7 @@ export function AtualizarCamposClient() {
   const [dados, setDados] = useState<{ arquivoNome: string; linhas: MasterLinha[]; preview: NonNullable<PreverAtualizacaoResult['preview']> } | null>(null)
   const [aceitas, setAceitas] = useState<Record<number, CampoAtualizavel[]>>({})
   const [resultado, setResultado] = useState<ConfirmarAtualizacaoResult | null>(null)
+  const [diagnostico, setDiagnostico] = useState<DiagnosticoPlanilha | null>(null)
 
   function handleFiles(files: FileList | null) {
     const f = files?.[0]
@@ -68,6 +70,7 @@ export function AtualizarCamposClient() {
     fd.append('arquivo', file)
     startPreview(async () => {
       const res = await preverAtualizacaoCampos(fd)
+      setDiagnostico(res.diagnostico ?? null)
       if (res.error || !res.preview || !res.linhas) {
         setErro(res.error ?? 'Falha ao gerar a prévia.')
         return
@@ -106,6 +109,7 @@ export function AtualizarCamposClient() {
     setAceitas({})
     setResultado(null)
     setErro(null)
+    setDiagnostico(null)
     setFase('upload')
   }
 
@@ -145,6 +149,8 @@ export function AtualizarCamposClient() {
             <p className="text-sm font-medium text-destructive">{erro}</p>
           </Card>
         )}
+
+        {diagnostico && <DiagnosticoCard diagnostico={diagnostico} />}
 
         <Card className="gap-4 p-6">
           <h3 className="text-base font-semibold text-foreground">
@@ -297,6 +303,7 @@ export function AtualizarCamposClient() {
   }
 
   return (
+    <div className="flex flex-col gap-6">
     <Card className="gap-4 p-6">
       <div className="flex flex-col gap-1">
         <h2 className="text-lg font-semibold text-foreground">Atualizar cadastro por planilha</h2>
@@ -369,6 +376,8 @@ export function AtualizarCamposClient() {
         </Button>
       </div>
     </Card>
+    {diagnostico && <DiagnosticoCard diagnostico={diagnostico} />}
+    </div>
   )
 }
 
@@ -396,5 +405,97 @@ function ResumoBox({
         {valor}
       </p>
     </div>
+  )
+}
+
+function DiagnosticoCard({ diagnostico }: { diagnostico: DiagnosticoPlanilha }) {
+  const amostraColunas =
+    diagnostico.amostras.length > 0 ? Object.keys(diagnostico.amostras[0]) : []
+  return (
+    <Card className="gap-4 p-6">
+      <div className="flex items-center gap-2">
+        <Search className="size-4.5 text-primary" />
+        <h3 className="text-base font-semibold text-foreground">Diagnóstico da leitura</h3>
+      </div>
+
+      <div className="grid gap-3 sm:grid-cols-2">
+        <div>
+          <p className="text-xs text-muted-foreground">Abas encontradas</p>
+          <div className="mt-1 flex flex-wrap gap-1.5">
+            {diagnostico.abasEncontradas.map((aba) => (
+              <Badge key={aba} variant={aba === diagnostico.abaEscolhida ? 'success' : 'neutral'}>
+                {aba}
+              </Badge>
+            ))}
+          </div>
+        </div>
+        <div>
+          <p className="text-xs text-muted-foreground">Linha de cabeçalho detectada</p>
+          <p className="mt-1 text-sm font-medium text-foreground">
+            {diagnostico.linhaCabecalhoIndex >= 0
+              ? `Aba "${diagnostico.abaEscolhida}", linha ${diagnostico.linhaCabecalhoIndex + 1}`
+              : 'Nenhuma linha de cabeçalho reconhecida'}
+          </p>
+        </div>
+      </div>
+
+      <div>
+        <p className="mb-1.5 text-xs text-muted-foreground">
+          Colunas reconhecidas ({diagnostico.colunasReconhecidas.length})
+        </p>
+        <div className="flex flex-wrap gap-1.5">
+          {diagnostico.colunasReconhecidas.length === 0 && (
+            <span className="text-sm text-muted-foreground">Nenhuma.</span>
+          )}
+          {diagnostico.colunasReconhecidas.map((c) => (
+            <Badge key={c.campo} variant="success">
+              {c.colunaOriginal} → {c.label}
+            </Badge>
+          ))}
+        </div>
+      </div>
+
+      <div>
+        <p className="mb-1.5 text-xs text-muted-foreground">
+          Colunas não reconhecidas ({diagnostico.colunasNaoReconhecidas.length})
+        </p>
+        <div className="flex flex-wrap gap-1.5">
+          {diagnostico.colunasNaoReconhecidas.length === 0 && (
+            <span className="text-sm text-muted-foreground">Nenhuma — todas as colunas foram reconhecidas.</span>
+          )}
+          {diagnostico.colunasNaoReconhecidas.map((c) => (
+            <Badge key={c} variant="outline">
+              {c}
+            </Badge>
+          ))}
+        </div>
+      </div>
+
+      {diagnostico.amostras.length > 0 && (
+        <div>
+          <p className="mb-1.5 text-xs text-muted-foreground">
+            Primeiras {diagnostico.amostras.length} linhas lidas
+          </p>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                {amostraColunas.map((col) => (
+                  <TableHead key={col}>{col}</TableHead>
+                ))}
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {diagnostico.amostras.map((linha, i) => (
+                <TableRow key={i}>
+                  {amostraColunas.map((col) => (
+                    <TableCell key={col}>{linha[col] == null ? '—' : String(linha[col])}</TableCell>
+                  ))}
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
+      )}
+    </Card>
   )
 }
