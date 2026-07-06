@@ -128,29 +128,35 @@ function vazio(v: string | null | undefined): boolean {
   return v == null || String(v).trim() === ''
 }
 
-// A base histórica de beneficiários guarda a carteirinha SEM o prefixo "567"
-// (código de operadora/plano) e, aparentemente, sem um dígito final extra que
-// o MECSAS inclui (dígito verificador). Ex. real observado: MECSAS
-// "56788888488637170010" (20 dígitos) = "567" + base "8888848863717001"
-// (16 dígitos) + dígito extra "0" no final. Como não dá para garantir que
-// todo registro segue exatamente esse padrão, tenta-se um pequeno conjunto de
-// variações (prefixo removido e/ou último dígito removido) em vez de assumir
-// só uma transformação fixa.
+// Padrão real confirmado: MECSAS = "567" + carteirinha_base (16 dígitos) +
+// 1 dígito extra no final (dígito verificador). Ex.: MECSAS
+// "56788888488637170010" (20 dígitos) -> base "8888848863717001" (16
+// dígitos), que é exatamente o que a base histórica guarda. Tenta-se, nesta
+// ordem (a carteirinha original já é tentada por quem chama esta função):
+//   1. valor original do MECSAS
+//   2. sem o prefixo "567"
+//   3. sem o prefixo "567" e sem o último dígito
+//   4. os 16 dígitos imediatamente antes do último dígito — não depende de
+//      o prefixo ser exatamente "567" (cobre variação de prefixo mantendo o
+//      padrão "base de 16 dígitos + 1 dígito verificador final")
 const PREFIXO_CARTEIRINHA_MECSAS = '567'
+const TAMANHO_BASE_CARTEIRINHA = 16
 
 function variantesCarteirinha(carteirinha: string): string[] {
-  const variantes = new Set<string>()
+  const variantes: string[] = []
+
   const semPrefixo = carteirinha.startsWith(PREFIXO_CARTEIRINHA_MECSAS)
     ? carteirinha.slice(PREFIXO_CARTEIRINHA_MECSAS.length)
     : null
+  if (semPrefixo) variantes.push(semPrefixo) // 2
 
-  for (const base of [carteirinha, semPrefixo]) {
-    if (!base) continue
-    variantes.add(base)
-    if (base.length > 1) variantes.add(base.slice(0, -1)) // sem possível dígito verificador final
+  if (semPrefixo && semPrefixo.length > 1) variantes.push(semPrefixo.slice(0, -1)) // 3
+
+  if (carteirinha.length >= TAMANHO_BASE_CARTEIRINHA + 1) {
+    variantes.push(carteirinha.slice(-(TAMANHO_BASE_CARTEIRINHA + 1), -1)) // 4
   }
-  variantes.delete(carteirinha) // já tentado antes de chamar esta função
-  return [...variantes]
+
+  return [...new Set(variantes)].filter((v) => v !== carteirinha)
 }
 
 // Identidade da linha dentro do próprio arquivo, para detectar duplicidade

@@ -356,10 +356,10 @@ export function AtualizarCamposClient() {
           Envie uma planilha (Nome, CPF, Carteirinha, Matrícula, Data de nascimento, Sexo,
           Empresa/filial, Data de admissão, Data de adesão, Plano, Tipo). O sistema casa cada
           linha principalmente pela <span className="font-medium text-foreground">carteirinha</span>{' '}
-          (se a carteirinha completa do MECSAS não bater direto, tenta variações removendo o
-          prefixo &quot;567&quot; e/ou o último dígito, já que a base atual guarda a carteirinha
-          sem esse prefixo e sem um possível dígito verificador final), depois por CPF, Matrícula
-          ou Nome — e mostra uma prévia. {' '}
+          (padrão confirmado: MECSAS = prefixo &quot;567&quot; + carteirinha base de 16 dígitos +
+          1 dígito verificador final — o sistema tenta o valor completo, sem o prefixo, sem o
+          prefixo e sem o dígito final, e os 16 dígitos antes do dígito final), depois por CPF,
+          Matrícula ou Nome — e mostra uma prévia. {' '}
           <span className="font-medium text-foreground">Nada é gravado até você confirmar</span>.
           Só preenche campos vazios; divergências (campo já preenchido com valor diferente)
           precisam da sua aprovação explícita.
