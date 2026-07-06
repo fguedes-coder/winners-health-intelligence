@@ -18,6 +18,7 @@ const PROTECTED_PREFIXES = [
   '/people-analytics',
   '/winners-decide',
   '/beneficiario',
+  '/api/winners-decide',
 ]
 
 export async function updateSession(request: NextRequest) {
