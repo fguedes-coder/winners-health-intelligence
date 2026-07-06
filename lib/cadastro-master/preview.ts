@@ -129,15 +129,28 @@ function vazio(v: string | null | undefined): boolean {
 }
 
 // A base histórica de beneficiários guarda a carteirinha SEM o prefixo "567"
-// (código de operadora/plano); o MECSAS traz sempre a carteirinha completa,
-// com esse prefixo. Para casar um beneficiário já cadastrado, tenta-se a
-// carteirinha do MECSAS como veio e, se não achar, removendo o prefixo.
+// (código de operadora/plano) e, aparentemente, sem um dígito final extra que
+// o MECSAS inclui (dígito verificador). Ex. real observado: MECSAS
+// "56788888488637170010" (20 dígitos) = "567" + base "8888848863717001"
+// (16 dígitos) + dígito extra "0" no final. Como não dá para garantir que
+// todo registro segue exatamente esse padrão, tenta-se um pequeno conjunto de
+// variações (prefixo removido e/ou último dígito removido) em vez de assumir
+// só uma transformação fixa.
 const PREFIXO_CARTEIRINHA_MECSAS = '567'
 
-function semPrefixoMecsas(carteirinha: string): string | null {
-  return carteirinha.startsWith(PREFIXO_CARTEIRINHA_MECSAS)
+function variantesCarteirinha(carteirinha: string): string[] {
+  const variantes = new Set<string>()
+  const semPrefixo = carteirinha.startsWith(PREFIXO_CARTEIRINHA_MECSAS)
     ? carteirinha.slice(PREFIXO_CARTEIRINHA_MECSAS.length)
     : null
+
+  for (const base of [carteirinha, semPrefixo]) {
+    if (!base) continue
+    variantes.add(base)
+    if (base.length > 1) variantes.add(base.slice(0, -1)) // sem possível dígito verificador final
+  }
+  variantes.delete(carteirinha) // já tentado antes de chamar esta função
+  return [...variantes]
 }
 
 // Identidade da linha dentro do próprio arquivo, para detectar duplicidade
@@ -196,14 +209,14 @@ export function gerarPreview(
       if (hit) candidatos.push({ campo: 'cpf', row: hit })
     }
     if (linha.carteirinha) {
-      const hit = byCarteirinha.get(linha.carteirinha)
-      if (hit) {
-        candidatos.push({ campo: 'carteirinha', row: hit })
-      } else {
-        const reduzida = semPrefixoMecsas(linha.carteirinha)
-        const hitReduzida = reduzida ? byCarteirinha.get(reduzida) : undefined
-        if (hitReduzida) candidatos.push({ campo: 'carteirinha', row: hitReduzida })
+      let hit = byCarteirinha.get(linha.carteirinha)
+      if (!hit) {
+        for (const variante of variantesCarteirinha(linha.carteirinha)) {
+          hit = byCarteirinha.get(variante)
+          if (hit) break
+        }
       }
+      if (hit) candidatos.push({ campo: 'carteirinha', row: hit })
     }
     if (linha.matricula) {
       const hit = byMatricula.get(linha.matricula)
