@@ -11,6 +11,7 @@ import {
   Coins,
   HeartPulse,
   Pencil,
+  RefreshCw,
   ScanSearch,
   Search,
   Upload,
@@ -34,7 +35,12 @@ import {
 import { formatBRL, formatNumber } from '@/lib/data'
 import { formatCompetencia } from '@/lib/categorias'
 import type { ColaboradoresResult, ColaboradorRow } from '@/lib/queries'
-import { importarNomes, importarVidas, salvarNome } from './actions'
+import {
+  importarNomes,
+  importarVidas,
+  mesclarVidas,
+  salvarNome,
+} from './actions'
 
 type Modo = 'acumulado' | 'mes' | 'ano' | 'periodo'
 type UtilFiltro = 'todos' | 'com' | 'sem'
@@ -81,6 +87,7 @@ export function ColaboradoresExplorer({
   const router = useRouter()
   const [isPending, startTransition] = useTransition()
   const fileVidasRef = useRef<HTMLInputElement>(null)
+  const fileMesclarRef = useRef<HTMLInputElement>(null)
   const fileNomesRef = useRef<HTMLInputElement>(null)
 
   const [busca, setBusca] = useState(buscaInicial)
@@ -199,6 +206,34 @@ export function ColaboradoresExplorer({
         router.refresh()
       } else {
         setImportMsg({ tipo: 'erro', texto: res.error ?? 'Falha na importação.' })
+      }
+    })
+  }
+
+  // Atualização (merge) na base ATIVA: corrige/atualiza os dados dos
+  // beneficiários e adiciona os novos, sem criar novo mês nem duplicar.
+  function handleMesclarVidas(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    const formData = new FormData()
+    formData.set('file', file)
+    setImportMsg(null)
+    startImport(async () => {
+      const res = await mesclarVidas(formData)
+      if (fileMesclarRef.current) fileMesclarRef.current.value = ''
+      if (res.ok) {
+        const cols = res.colunasDetectadas
+          ? ` Colunas: ${Object.values(res.colunasDetectadas).join(', ')}.`
+          : ''
+        setImportMsg({
+          tipo: 'ok',
+          texto: `Base ${formatarCompetencia(res.competencia)} atualizada: ${res.atualizados} atualizados, ${res.inseridos} novos, ${res.inalterados} sem mudança${
+            res.ignorados > 0 ? `, ${res.ignorados} ignorados` : ''
+          }.${cols}`,
+        })
+        router.refresh()
+      } else {
+        setImportMsg({ tipo: 'erro', texto: res.error ?? 'Falha na atualização.' })
       }
     })
   }
@@ -564,15 +599,45 @@ export function ColaboradoresExplorer({
                 className="hidden"
                 onChange={(e) => handleArquivo(e, 'vidas')}
               />
-              <Button
-                type="button"
-                disabled={importando}
-                className="w-fit"
-                onClick={() => fileVidasRef.current?.click()}
-              >
-                <Upload className="size-4" />
-                {importando ? 'Importando…' : 'Importar base de vidas'}
-              </Button>
+              <input
+                ref={fileMesclarRef}
+                type="file"
+                accept=".csv,.txt,text/plain,text/csv"
+                className="hidden"
+                onChange={handleMesclarVidas}
+              />
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  type="button"
+                  disabled={importando}
+                  className="w-fit"
+                  onClick={() => fileVidasRef.current?.click()}
+                >
+                  <Upload className="size-4" />
+                  {importando ? 'Importando…' : 'Importar base de vidas'}
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={importando}
+                  className="w-fit"
+                  onClick={() => fileMesclarRef.current?.click()}
+                  title="Atualiza os dados dos beneficiários na competência ativa e adiciona os novos, sem criar um novo mês nem duplicar."
+                >
+                  <RefreshCw className="size-4" />
+                  {importando ? 'Processando…' : 'Atualizar base ativa (mesclar)'}
+                </Button>
+              </div>
+              <p className="text-xs leading-relaxed text-muted-foreground">
+                <span className="font-medium text-foreground">Atualizar</span>{' '}
+                mescla o arquivo na base ativa{' '}
+                {data.competenciaAtiva
+                  ? `(${formatarCompetencia(data.competenciaAtiva)})`
+                  : ''}
+                : corrige os dados de quem já existe e inclui os novos, sem criar
+                outro mês e sem duplicar beneficiários. Campos em branco no
+                arquivo não apagam os dados existentes.
+              </p>
             </div>
 
             {/* Base de nomes */}
