@@ -1387,6 +1387,7 @@ export type ColaboradorRow = {
   titular: boolean
   vinculo: VinculoNorm
   sexo: string | null // M | F | null
+  dataNascimento: string | null // YYYY-MM-DD (fonte: master -> vidas)
   idade: number | null
   status: string | null // ATIVO | INATIVO | null
   cadastrado: boolean // existe na base de vidas elegíveis
@@ -1690,9 +1691,11 @@ export async function getColaboradores(
         cpf: vida?.cpf ?? null,
         nomeNorm: vida?.nome ? normalizarNome(vida.nome) : null,
       })
-    const idade = calcularIdade(
-      coalesceStr(master?.dataNascimento, vida?.data_nascimento),
+    const dataNascimento = coalesceStr(
+      master?.dataNascimento,
+      vida?.data_nascimento,
     )
+    const idade = calcularIdade(dataNascimento)
     const tipoFinal = coalesceStr(
       master?.tipo,
       vida?.tipo,
@@ -1713,6 +1716,7 @@ export async function getColaboradores(
       titular: vinculo === 'TITULAR',
       vinculo,
       sexo: coalesceStr(master?.sexo, vida?.sexo),
+      dataNascimento,
       idade,
       status:
         coalesceStr(master?.status, vida?.status) ?? (util ? 'ATIVO' : null),
