@@ -9,33 +9,50 @@ export const metadata = {
 }
 
 type LinhaMaster = Record<string, unknown> & { id: string; nome?: string | null }
+type LinhaVidas = Record<string, unknown>
 
-const COLS = '*'
 const PAGE = 1000
 
 async function carregarTudo(
   supabase: Awaited<ReturnType<typeof createClient>>,
-): Promise<LinhaMaster[]> {
-  const out: LinhaMaster[] = []
+  tabela: string,
+  colunas = '*',
+): Promise<Record<string, unknown>[]> {
+  const out: Record<string, unknown>[] = []
   let from = 0
   for (;;) {
     const { data, error } = await supabase
-      .from('beneficiarios_master')
-      .select(COLS)
+      .from(tabela)
+      .select(colunas)
       .range(from, from + PAGE - 1)
     if (error || !data || data.length === 0) break
-    out.push(...(data as LinhaMaster[]))
+    out.push(...(data as Record<string, unknown>[]))
     if (data.length < PAGE) break
     from += PAGE
   }
   return out
 }
 
+// Heurística: carteirinha "crua" no formato do MECSAS (prefixo "567" +
+// 16 dígitos + 1 dígito verificador, 20 caracteres) — é exatamente o que
+// o INSERT antigo (já removido do código) gravava para "não encontrados".
+// Uma carteirinha nesse formato exato, coexistindo com outra mais curta
+// para o mesmo nome, é o sinal mais forte de duplicata criada pelo bug.
+function pareceCarteirinhaMecsasBruta(carteirinha: unknown): boolean {
+  if (typeof carteirinha !== 'string') return false
+  return /^567\d{17}$/.test(carteirinha)
+}
+
 export default async function DiagnosticoDuplicidadesPage() {
   const supabase = await createClient()
 
-  const [todos, { data: importacoes }] = await Promise.all([
-    carregarTudo(supabase),
+  const [todos, vidas, { data: importacoes }] = await Promise.all([
+    carregarTudo(supabase, 'beneficiarios_master') as Promise<LinhaMaster[]>,
+    carregarTudo(
+      supabase,
+      'beneficiario_vidas',
+      'carteirinha, nome, cpf, tipo, plano, empresa, status, competencia',
+    ) as Promise<LinhaVidas[]>,
     supabase
       .from('cadastro_master_importacoes')
       .select(
@@ -44,6 +61,19 @@ export default async function DiagnosticoDuplicidadesPage() {
       .order('created_at', { ascending: false })
       .limit(20),
   ])
+
+  // Índice de beneficiario_vidas por carteirinha, pegando a competência mais
+  // recente por chave — esta tabela NUNCA foi escrita pela tela Atualizar
+  // Cadastro, então serve de referência do valor original.
+  const vidasPorCarteirinha = new Map<string, LinhaVidas>()
+  for (const v of vidas) {
+    const cart = typeof v.carteirinha === 'string' ? v.carteirinha.trim() : ''
+    if (!cart) continue
+    const existente = vidasPorCarteirinha.get(cart)
+    if (!existente || String(v.competencia ?? '') > String(existente.competencia ?? '')) {
+      vidasPorCarteirinha.set(cart, v)
+    }
+  }
 
   const porNome = new Map<string, LinhaMaster[]>()
   for (const r of todos) {
@@ -55,6 +85,38 @@ export default async function DiagnosticoDuplicidadesPage() {
     porNome.set(chave, arr)
   }
   const duplicados = [...porNome.entries()].filter(([, rows]) => rows.length > 1)
+
+  // Plano de correção sugerido: para cada grupo duplicado, separa a(s) linha(s)
+  // com carteirinha no formato cru do MECSAS (candidata a remover) das demais
+  // (registro original), e compara plano/empresa/tipo/status do original
+  // contra beneficiario_vidas (nunca escrita por esta tela) para sinalizar
+  // divergência introduzida.
+  const CAMPOS_COMPARAR = ['plano', 'empresa', 'tipo', 'status'] as const
+  const planoSugerido = duplicados.map(([nomeNorm, rows]) => {
+    const candidatasRemover = rows.filter((r) => pareceCarteirinhaMecsasBruta(r.carteirinha))
+    const originais = rows.filter((r) => !pareceCarteirinhaMecsasBruta(r.carteirinha))
+    const referencias = originais.map((original) => {
+      const cart = typeof original.carteirinha === 'string' ? original.carteirinha.trim() : ''
+      const vida = vidasPorCarteirinha.get(cart)
+      const divergencias = CAMPOS_COMPARAR.filter((campo) => {
+        if (!vida) return false
+        const atual = original[campo]
+        const referencia = vida[campo]
+        if (referencia == null || referencia === '') return false
+        return String(atual ?? '').trim() !== String(referencia).trim()
+      }).map((campo) => ({
+        campo,
+        atual: original[campo] as string | null,
+        referencia: vida?.[campo] as string | null,
+      }))
+      return { original, vida, divergencias }
+    })
+    return { nomeNorm, candidatasRemover, referencias }
+  })
+  const totalRemover = planoSugerido.reduce((s, p) => s + p.candidatasRemover.length, 0)
+  const totalComDivergencia = planoSugerido.filter((p) =>
+    p.referencias.some((r) => r.divergencias.length > 0),
+  ).length
 
   const colunas =
     todos.length > 0
@@ -117,6 +179,68 @@ export default async function DiagnosticoDuplicidadesPage() {
                 )}
               </tbody>
             </table>
+          </div>
+        </div>
+
+        <div className="rounded-lg border border-primary/40 bg-primary/5 p-4">
+          <h2 className="mb-2 text-base font-semibold text-foreground">
+            Plano de correção sugerido (nenhuma ação foi executada)
+          </h2>
+          <p className="mb-3 text-sm text-muted-foreground">
+            Critério: candidata a remover = carteirinha no formato cru do MECSAS (prefixo
+            &quot;567&quot; + 17 dígitos, 20 no total) coexistindo com outra carteirinha mais curta
+            para o mesmo nome. Divergência = plano/empresa/tipo/status do registro original
+            diferente do que está em <code>beneficiario_vidas</code> (tabela nunca escrita por
+            esta tela, usada como referência).
+          </p>
+          <p className="mb-3 text-sm">
+            <strong>{totalRemover}</strong> registro(s) candidato(s) a remoção,{' '}
+            <strong>{totalComDivergencia}</strong> nome(s) com possível divergência de
+            plano/empresa/tipo/status a reverter.
+          </p>
+          {planoSugerido.length === 0 && (
+            <p className="text-sm text-muted-foreground">Nenhuma duplicidade detectada.</p>
+          )}
+          <div className="flex flex-col gap-3">
+            {planoSugerido.map(({ nomeNorm, candidatasRemover, referencias }) => (
+              <div key={nomeNorm} className="rounded-lg border border-border bg-background p-3">
+                <p className="mb-2 text-sm font-medium text-foreground">{nomeNorm}</p>
+                {candidatasRemover.map((r) => (
+                  <p key={r.id} className="text-xs text-destructive">
+                    Remover: id <span className="font-mono">{r.id}</span> — carteirinha{' '}
+                    {String(r.carteirinha)} (formato cru MECSAS, sem vínculo/utilização esperados)
+                  </p>
+                ))}
+                {referencias.map(({ original, vida, divergencias }) => (
+                  <div key={original.id} className="mt-1">
+                    <p className="text-xs text-success">
+                      Manter (original): id <span className="font-mono">{original.id}</span> —
+                      carteirinha {String(original.carteirinha)}
+                    </p>
+                    {!vida && (
+                      <p className="text-xs text-muted-foreground">
+                        Sem registro correspondente em beneficiario_vidas para comparar.
+                      </p>
+                    )}
+                    {divergencias.length > 0 && (
+                      <ul className="ml-4 list-disc text-xs text-warning">
+                        {divergencias.map((d) => (
+                          <li key={d.campo}>
+                            {d.campo}: atual &quot;{d.atual ?? '—'}&quot; → referência (vidas)
+                            &quot;{d.referencia ?? '—'}&quot;
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                    {vida && divergencias.length === 0 && (
+                      <p className="text-xs text-muted-foreground">
+                        Sem divergência detectada contra beneficiario_vidas.
+                      </p>
+                    )}
+                  </div>
+                ))}
+              </div>
+            ))}
           </div>
         </div>
 
