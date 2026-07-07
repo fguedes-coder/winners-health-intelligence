@@ -9,10 +9,65 @@ import {
 } from '@/lib/categorias'
 import { beneficiarioLabel } from '@/lib/display-prefs'
 import { getBenefDisplay } from '@/lib/display-prefs-server'
-import { loadMasterIndex, type MasterCadastro } from '@/lib/cadastro-master/read'
+import {
+  loadMasterIndex,
+  masterNaoRepresentados,
+  type MasterCadastro,
+} from '@/lib/cadastro-master/read'
 import { normalizarNome } from '@/lib/people-analytics/rh'
 
 type SupabaseServer = Awaited<ReturnType<typeof createClient>>
+
+// A tabela `eventos_utilizacao` é a base bruta/auditável (todo import cru cai
+// nela, sem deduplicação) e deve permanecer intocada. Todas as leituras
+// analíticas (Dashboard Executivo, Radar de Risco, Ranking de Beneficiários/
+// Prestadores, Jornada Assistencial, PDF Executivo) usam esta view, que
+// remove as linhas marcadas em `eventos_duplicados_marcados` (reimportação do
+// arquivo cumulativo 81938.txt + duplicatas confirmadas por
+// COD_DOCUMENTO/NUM_GUIA_TISS — auditoria de 2026-07-07).
+const EVENTOS_UTILIZACAO_VIEW = 'eventos_utilizacao_dedup'
+
+// Indicador de auditoria (bruto x deduplicado) exposto no Dashboard Executivo.
+export type AuditoriaDuplicidade = {
+  valorBruto: number
+  valorDeduplicado: number
+  valorRemovido: number
+  percentualCorrigido: number // valorRemovido ÷ valorBruto × 100
+  eventosBrutos: number
+  eventosDeduplicados: number
+  eventosRemovidos: number
+}
+
+// Calcula o indicador de auditoria a partir da view `eventos_duplicados_marcados`
+// (linhas excluídas), sem precisar reler a tabela bruta inteira. Respeita o
+// filtro de competência quando informado, para acompanhar o recorte do dashboard.
+async function getAuditoriaDuplicidade(
+  supabase: SupabaseServer,
+  valorDeduplicado: number,
+  eventosDeduplicados: number,
+  mes?: string[],
+): Promise<AuditoriaDuplicidade> {
+  let query = supabase
+    .from('eventos_duplicados_marcados')
+    .select('valor_pago, competencia_evento')
+  if (mes && mes.length > 0) {
+    query = query.in('competencia_evento', mes)
+  }
+  const { data } = await query
+  const rows = (data ?? []) as { valor_pago: number; competencia_evento: string | null }[]
+  const valorRemovido = rows.reduce((a, r) => a + Number(r.valor_pago ?? 0), 0)
+  const eventosRemovidos = rows.length
+  const valorBruto = valorDeduplicado + valorRemovido
+  return {
+    valorBruto,
+    valorDeduplicado,
+    valorRemovido,
+    percentualCorrigido: valorBruto > 0 ? Number(((valorRemovido / valorBruto) * 100).toFixed(1)) : 0,
+    eventosBrutos: eventosDeduplicados + eventosRemovidos,
+    eventosDeduplicados,
+    eventosRemovidos,
+  }
+}
 
 // Mapa carteirinha -> nome (base auxiliar importada). Usado apenas para a
 // forma de EXIBIÇÃO dos beneficiários; nunca afeta cálculos ou agrupamentos.
@@ -471,6 +526,9 @@ export type DashboardData = {
   faixaEtaria: FaixaRowFull[]
   tipoUtilizacao: TipoUtilRow[]
   periodo: { inicio: string | null; fim: string | null }
+  // Indicador de auditoria: valor bruto (tabela crua) x deduplicado (view),
+  // valor removido por duplicidade confirmada e percentual de ajuste.
+  auditoriaDuplicidade: AuditoriaDuplicidade
 }
 
 function faixaDaIdade(idade: number | null): string {
@@ -577,7 +635,7 @@ export async function getDashboardData(
   const eventos: EventoRow[] = []
   for (;;) {
     const { data, error } = await supabase
-      .from('eventos_utilizacao')
+      .from(EVENTOS_UTILIZACAO_VIEW)
       .select(
         'apolice_id, subestipulante_id, cod_usuario, tipo_beneficiario, idade, plano, prestador_nome, prestador_cnpj, categoria_atendimento, servico_principal, servico, grupo_estatistico, valor_pago, data_atendimento, internacao, saude_mental, competencia',
       )
@@ -634,6 +692,15 @@ export async function getDashboardData(
       faixaEtaria: [],
       tipoUtilizacao: [],
       periodo: { inicio: null, fim: null },
+      auditoriaDuplicidade: {
+        valorBruto: 0,
+        valorDeduplicado: 0,
+        valorRemovido: 0,
+        percentualCorrigido: 0,
+        eventosBrutos: 0,
+        eventosDeduplicados: 0,
+        eventosRemovidos: 0,
+      },
     }
   }
 
@@ -1088,6 +1155,13 @@ export async function getDashboardData(
       ? Number(((valorUtilizado / valorFatura) * 100).toFixed(1))
       : null
 
+  const auditoriaDuplicidade = await getAuditoriaDuplicidade(
+    supabase,
+    valorUtilizado,
+    filtrados.length,
+    filtros.mes,
+  )
+
   return {
     hasData: true,
     competenciaAtual,
@@ -1147,6 +1221,7 @@ export async function getDashboardData(
     faixaEtaria,
     tipoUtilizacao,
     periodo: { inicio: periodoInicio, fim: periodoFim },
+    auditoriaDuplicidade,
   }
 }
 
@@ -1304,7 +1379,7 @@ export async function getEventosDetalhados(): Promise<EventoDetalhado[]> {
   const out: EventoDetalhado[] = []
   for (;;) {
     const { data, error } = await supabase
-      .from('eventos_utilizacao')
+      .from(EVENTOS_UTILIZACAO_VIEW)
       .select(
         'id, apolice_id, subestipulante_id, cod_usuario, tipo_beneficiario, sexo, idade, plano, prestador_nome, prestador_cnpj, servico_principal, servico, grupo_estatistico, categoria_atendimento, internacao, saude_mental, valor_apresentado, valor_pago, valor_copart, valor_empresa, data_atendimento, data_pagamento, competencia',
       )
@@ -1383,6 +1458,7 @@ export type ColaboradorRow = {
   titular: boolean
   vinculo: VinculoNorm
   sexo: string | null // M | F | null
+  dataNascimento: string | null // YYYY-MM-DD (fonte: master -> vidas)
   idade: number | null
   status: string | null // ATIVO | INATIVO | null
   cadastrado: boolean // existe na base de vidas elegíveis
@@ -1404,6 +1480,7 @@ export type ColaboradoresResult = {
   totalVidas: number
   totalTitulares: number
   totalDependentes: number
+  totalSemClassificacao: number
   vidasComUtilizacao: number
   vidasSemUtilizacao: number
   vidasCadastradas: number // presentes na base de vidas elegíveis
@@ -1637,27 +1714,39 @@ export async function getColaboradores(
     from += PAGE
   }
 
-  // Universo = Cadastro Mestre ∪ base de vidas elegíveis ∪ carteirinhas que
-  // utilizaram. O Cadastro Mestre é a fonte de MAIOR precedência e amplia a
-  // população: registros exclusivos do mestre também aparecem nas telas.
-  const vidaCpfSet = new Set<string>()
+  // Universo = base de vidas elegíveis ∪ carteirinhas que utilizaram ∪ pessoas
+  // que existem SÓ no Cadastro Mestre. IMPORTANTE: a carteirinha do master pode
+  // diferir da usada em vidas/eventos, mas casar por CPF/nome. Por isso NÃO
+  // adicionamos as carteirinhas do master ao universo — apenas os registros que
+  // não estão representados na população real viram linhas novas (via chave
+  // sintética). Os demais só enriquecem a linha existente (resolve por CPF/nome).
+  const cartConhecidas = new Set<string>([
+    ...vidaPorCarteirinha.keys(),
+    ...mapa.keys(),
+  ])
+  const cpfConhecidos = new Set<string>()
+  const nomesConhecidos = new Set<string>()
   for (const v of vidaPorCarteirinha.values()) {
     const c = (v.cpf ?? '').replace(/\D/g, '')
-    if (c) vidaCpfSet.add(c)
+    if (c) cpfConhecidos.add(c)
+    if (v.nome) nomesConhecidos.add(normalizarNome(v.nome))
   }
-  // Registros do mestre sem carteirinha que NÃO casam por CPF com uma vida
-  // recebem uma chave sintética (aparecem em listagens/qualidade, sem ficha).
+  for (const nome of nomePorCarteirinha.values()) {
+    if (nome) nomesConhecidos.add(normalizarNome(nome))
+  }
+
   const sinteticoPorChave = new Map<string, MasterCadastro>()
-  for (const m of masterIndex.semCarteirinha) {
-    const cpfDig = (m.cpf ?? '').replace(/\D/g, '')
-    if (cpfDig && vidaCpfSet.has(cpfDig)) continue // será resolvido via CPF
+  for (const m of masterNaoRepresentados(masterIndex, {
+    carteirinhas: cartConhecidas,
+    cpfs: cpfConhecidos,
+    nomesNorm: nomesConhecidos,
+  })) {
     sinteticoPorChave.set(`master:${m.id}`, m)
   }
 
   const universo = new Set<string>([
     ...vidaPorCarteirinha.keys(),
     ...mapa.keys(),
-    ...masterIndex.byCarteirinha.keys(),
     ...sinteticoPorChave.keys(),
   ])
 
@@ -1673,9 +1762,11 @@ export async function getColaboradores(
         cpf: vida?.cpf ?? null,
         nomeNorm: vida?.nome ? normalizarNome(vida.nome) : null,
       })
-    const idade = calcularIdade(
-      coalesceStr(master?.dataNascimento, vida?.data_nascimento),
+    const dataNascimento = coalesceStr(
+      master?.dataNascimento,
+      vida?.data_nascimento,
     )
+    const idade = calcularIdade(dataNascimento)
     const tipoFinal = coalesceStr(
       master?.tipo,
       vida?.tipo,
@@ -1686,13 +1777,17 @@ export async function getColaboradores(
       carteirinha: cart,
       nome: coalesceStr(master?.nome, vida?.nome, nomePorCarteirinha.get(cart)),
       cpf: coalesceStr(master?.cpf, vida?.cpf),
-      plano: coalesceStr(master?.plano, vida?.plano, util?.plano),
-      empresa: coalesceStr(master?.empresa, vida?.empresa, util?.empresa),
+      // Plano/empresa: o master costuma trazer apenas CÓDIGOS numéricos; a
+      // utilização e a base de vidas trazem nomes legíveis. Preferimos o valor
+      // legível e só caímos no master quando não há outra fonte.
+      plano: coalesceStr(util?.plano, vida?.plano, master?.plano),
+      empresa: coalesceStr(util?.empresa, vida?.empresa, master?.empresa),
       subCodigo: util?.subCodigo ?? null,
       tipoBeneficiario: tipoFinal,
       titular: vinculo === 'TITULAR',
       vinculo,
       sexo: coalesceStr(master?.sexo, vida?.sexo),
+      dataNascimento,
       idade,
       status:
         coalesceStr(master?.status, vida?.status) ?? (util ? 'ATIVO' : null),
@@ -1709,12 +1804,20 @@ export async function getColaboradores(
   // Quando há Base de Vidas Elegíveis importada, o total populacional é a
   // própria base (independe de utilização). Sem base, usamos as carteirinhas
   // observadas na utilização como aproximação da população.
-  const vidasCadastradas = colaboradores.filter((c) => c.cadastrado).length
   // Há base de referência quando existe Cadastro Mestre OU Base de Vidas.
   const temBase = temBaseVidas || masterIndex.temMaster
-  const populacao = temBase
-    ? colaboradores.filter((c) => c.cadastrado)
-    : colaboradores
+  // Total de Vidas considera SOMENTE a Base de Vidas Elegíveis (competência
+  // ativa). O Cadastro Mestre e a utilização apenas COMPLEMENTAM dados — não
+  // aumentam a população. Sem base de vidas, cai para o cadastro (master) e,
+  // por fim, para todo o recorte observado na utilização.
+  const vidasCadastradas = colaboradores.filter((c) =>
+    vidaPorCarteirinha.has(c.carteirinha),
+  ).length
+  const populacao = temBaseVidas
+    ? colaboradores.filter((c) => vidaPorCarteirinha.has(c.carteirinha))
+    : temBase
+      ? colaboradores.filter((c) => c.cadastrado)
+      : colaboradores
 
   // ---- KPIs populacionais ----
   const totalVidas = populacao.length
@@ -1723,6 +1826,10 @@ export async function getColaboradores(
   ).length
   const totalDependentes = populacao.filter(
     (c) => c.vinculo === 'DEPENDENTE',
+  ).length
+  // Vidas na base ativa sem tipo Titular/Dependente identificável.
+  const totalSemClassificacao = populacao.filter(
+    (c) => c.vinculo !== 'TITULAR' && c.vinculo !== 'DEPENDENTE',
   ).length
   // Vidas com utilização = TODOS os utilizadores distintos no período, mesmo os
   // que não constam no cadastro (carteirinhas órfãs ainda contam como utilização).
@@ -1778,6 +1885,7 @@ export async function getColaboradores(
     totalVidas,
     totalTitulares,
     totalDependentes,
+    totalSemClassificacao,
     vidasComUtilizacao,
     vidasSemUtilizacao: Math.max(0, totalVidas - vidasComUtilizacao),
     vidasCadastradas,
@@ -1950,19 +2058,27 @@ export async function getDiagnosticoBase(
   }))
   const temBaseVidas = vidasRaw.length > 0
 
-  // O Cadastro Mestre também compõe a base elegível (amplia a população).
-  // Registros do mestre com carteirinha ainda não presente entram na base.
+  // O Cadastro Mestre também compõe a base elegível (amplia a população), mas
+  // SÓ com pessoas que ainda não estão na base de vidas. Como a carteirinha do
+  // master pode diferir da de vidas embora o CPF/nome casem, deduplicamos por
+  // carteirinha, CPF e nome para não inflar a base com registros repetidos.
   const cartVidas = new Set(vidasRaw.map((v) => v.carteirinha))
-  const vidasMaster: VidaMini[] = []
-  for (const m of masterIndex.list) {
-    const cart = (m.carteirinha ?? '').trim()
-    if (cart && cartVidas.has(cart)) continue
-    vidasMaster.push({
-      carteirinha: cart || `master:${m.id}`,
-      nome: m.nome,
-      cpf: m.cpf,
-    })
+  const cpfVidas = new Set<string>()
+  const nomeVidas = new Set<string>()
+  for (const v of vidasRaw) {
+    const c = (v.cpf ?? '').replace(/\D/g, '')
+    if (c) cpfVidas.add(c)
+    if (v.nome) nomeVidas.add(normalizarNome(v.nome))
   }
+  const vidasMaster: VidaMini[] = masterNaoRepresentados(masterIndex, {
+    carteirinhas: cartVidas,
+    cpfs: cpfVidas,
+    nomesNorm: nomeVidas,
+  }).map((m) => ({
+    carteirinha: (m.carteirinha ?? '').trim() || `master:${m.id}`,
+    nome: m.nome,
+    cpf: m.cpf,
+  }))
   const vidas = [...vidasRaw, ...vidasMaster]
   const vidaPorCarteirinha = new Map<string, VidaMini>(
     vidas.map((v) => [v.carteirinha, v]),
@@ -2365,8 +2481,9 @@ export async function getBeneficiarioPerfil(
       coalesceStr(master?.dataNascimento, vida?.data_nascimento),
     ),
     dataNascimento: coalesceStr(master?.dataNascimento, vida?.data_nascimento),
-    plano: coalesceStr(master?.plano, vida?.plano, planoUtil),
-    empresa: coalesceStr(master?.empresa, vida?.empresa, empresaUtil),
+    // Plano/empresa: prefere o valor legível (utilização/vida) ao código do master.
+    plano: coalesceStr(planoUtil, vida?.plano, master?.plano),
+    empresa: coalesceStr(empresaUtil, vida?.empresa, master?.empresa),
     dataAdesao: coalesceStr(master?.dataAdesao, vida?.data_adesao),
     status:
       coalesceStr(master?.status, vida?.status) ??
@@ -2507,17 +2624,21 @@ export async function getQualidadeCadastral(): Promise<QualidadeCadastral> {
     from += PAGE
   }
 
-  // População de referência: Cadastro Mestre ∪ base de vidas; se nenhum
-  // existir, as carteirinhas observadas na utilização.
-  const vidaCpfSet = new Set<string>()
+  // População de referência: base de vidas ∪ pessoas que existem SÓ no Cadastro
+  // Mestre. A carteirinha do master pode diferir da de vidas/eventos mas casar
+  // por CPF; por isso deduplicamos por carteirinha/CPF (evita contagem dupla)
+  // em vez de adicionar todas as carteirinhas do master ao universo.
+  const cartConhecidas = new Set<string>(vidaPorCarteirinha.keys())
+  const cpfConhecidos = new Set<string>()
   for (const v of vidaPorCarteirinha.values()) {
     const c = (v.cpf ?? '').replace(/\D/g, '')
-    if (c) vidaCpfSet.add(c)
+    if (c) cpfConhecidos.add(c)
   }
   const sinteticoPorChave = new Map<string, MasterCadastro>()
-  for (const m of masterIndex.semCarteirinha) {
-    const cpfDig = (m.cpf ?? '').replace(/\D/g, '')
-    if (cpfDig && vidaCpfSet.has(cpfDig)) continue
+  for (const m of masterNaoRepresentados(masterIndex, {
+    carteirinhas: cartConhecidas,
+    cpfs: cpfConhecidos,
+  })) {
     sinteticoPorChave.set(`master:${m.id}`, m)
   }
   const temBase = temBaseVidas || masterIndex.temMaster
@@ -2525,7 +2646,6 @@ export async function getQualidadeCadastral(): Promise<QualidadeCadastral> {
     ? [
         ...new Set<string>([
           ...vidaPorCarteirinha.keys(),
-          ...masterIndex.byCarteirinha.keys(),
           ...sinteticoPorChave.keys(),
         ]),
       ]
