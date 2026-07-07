@@ -1408,6 +1408,7 @@ export type ColaboradoresResult = {
   totalVidas: number
   totalTitulares: number
   totalDependentes: number
+  totalSemClassificacao: number
   vidasComUtilizacao: number
   vidasSemUtilizacao: number
   vidasCadastradas: number // presentes na base de vidas elegíveis
@@ -1728,12 +1729,20 @@ export async function getColaboradores(
   // Quando há Base de Vidas Elegíveis importada, o total populacional é a
   // própria base (independe de utilização). Sem base, usamos as carteirinhas
   // observadas na utilização como aproximação da população.
-  const vidasCadastradas = colaboradores.filter((c) => c.cadastrado).length
   // Há base de referência quando existe Cadastro Mestre OU Base de Vidas.
   const temBase = temBaseVidas || masterIndex.temMaster
-  const populacao = temBase
-    ? colaboradores.filter((c) => c.cadastrado)
-    : colaboradores
+  // Total de Vidas considera SOMENTE a Base de Vidas Elegíveis (competência
+  // ativa). O Cadastro Mestre e a utilização apenas COMPLEMENTAM dados — não
+  // aumentam a população. Sem base de vidas, cai para o cadastro (master) e,
+  // por fim, para todo o recorte observado na utilização.
+  const vidasCadastradas = colaboradores.filter((c) =>
+    vidaPorCarteirinha.has(c.carteirinha),
+  ).length
+  const populacao = temBaseVidas
+    ? colaboradores.filter((c) => vidaPorCarteirinha.has(c.carteirinha))
+    : temBase
+      ? colaboradores.filter((c) => c.cadastrado)
+      : colaboradores
 
   // ---- KPIs populacionais ----
   const totalVidas = populacao.length
@@ -1742,6 +1751,10 @@ export async function getColaboradores(
   ).length
   const totalDependentes = populacao.filter(
     (c) => c.vinculo === 'DEPENDENTE',
+  ).length
+  // Vidas na base ativa sem tipo Titular/Dependente identificável.
+  const totalSemClassificacao = populacao.filter(
+    (c) => c.vinculo !== 'TITULAR' && c.vinculo !== 'DEPENDENTE',
   ).length
   // Vidas com utilização = TODOS os utilizadores distintos no período, mesmo os
   // que não constam no cadastro (carteirinhas órfãs ainda contam como utilização).
@@ -1797,6 +1810,7 @@ export async function getColaboradores(
     totalVidas,
     totalTitulares,
     totalDependentes,
+    totalSemClassificacao,
     vidasComUtilizacao,
     vidasSemUtilizacao: Math.max(0, totalVidas - vidasComUtilizacao),
     vidasCadastradas,

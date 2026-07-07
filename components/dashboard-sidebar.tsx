@@ -7,7 +7,6 @@ import {
   BarChart3,
   Brain,
   Contact,
-  Database,
   FileText,
   HeartPulse,
   LayoutDashboard,
@@ -33,12 +32,6 @@ const navItems: {
   { label: 'Sinistralidade', href: '/sinistralidade', icon: Activity },
   { label: 'Utilização', href: '/utilizacao', icon: Stethoscope },
   { label: 'Beneficiários', href: '/colaboradores', icon: Contact },
-  {
-    label: 'Cadastro Mestre',
-    href: '/cadastro-master/importar',
-    icon: Database,
-    badge: 'Novo',
-  },
   {
     label: 'Jornada Assistencial',
     href: '/jornada-assistencial',
