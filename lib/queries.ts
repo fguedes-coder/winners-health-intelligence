@@ -1562,41 +1562,6 @@ export async function getColaboradores(
   )
   const temBaseVidas = vidaPorCarteirinha.size > 0
 
-  // Cadastro mais recente por carteirinha considerando TODAS as competências
-  // (não apenas a ativa). Isso alinha a listagem com a ficha individual, que
-  // usa a competência mais recente de cada beneficiário. Sem isso, quem tem o
-  // cadastro (ex.: data de nascimento) apenas numa competência antiga aparece
-  // sem idade na listagem.
-  const vidaCadastralPorCarteirinha = new Map<
-    string,
-    VidaCadastro & { competencia: string | null }
-  >()
-  {
-    const PAGE_C = 1000
-    let fromC = 0
-    for (;;) {
-      const { data, error } = await supabase
-        .from('beneficiario_vidas')
-        .select(
-          'carteirinha, nome, cpf, tipo, sexo, data_nascimento, plano, empresa, data_adesao, status, competencia',
-        )
-        .order('competencia', { ascending: false })
-        .range(fromC, fromC + PAGE_C - 1)
-      if (error || !data || data.length === 0) break
-      for (const raw of data as (VidaCadastro & {
-        competencia: string | null
-      })[]) {
-        const cart = raw.carteirinha.trim()
-        const atual = vidaCadastralPorCarteirinha.get(cart)
-        // Como vem ordenado desc por competência, o primeiro visto por
-        // carteirinha já é o mais recente.
-        if (!atual) vidaCadastralPorCarteirinha.set(cart, raw)
-      }
-      if (data.length < PAGE_C) break
-      fromC += PAGE_C
-    }
-  }
-
   type Acc = {
     carteirinha: string
     plano: string | null
@@ -1700,64 +1665,37 @@ export async function getColaboradores(
     const sintetico = sinteticoPorChave.get(cart)
     const util = sintetico ? undefined : mapa.get(cart)
     const vida = sintetico ? undefined : vidaPorCarteirinha.get(cart)
-    // Cadastro histórico (competência mais recente do beneficiário), usado
-    // como fallback quando a competência ativa não traz o campo.
-    const vidaCad = sintetico ? undefined : vidaCadastralPorCarteirinha.get(cart)
-    // Chaves de identidade para casar o Cadastro Mestre: usa a vida ativa e
-    // cai no cadastro histórico, garantindo match por CPF/nome mesmo quando o
-    // beneficiário não está na competência ativa.
-    const cpfIdent = coalesceStr(vida?.cpf, vidaCad?.cpf)
-    const nomeIdent = coalesceStr(vida?.nome, vidaCad?.nome)
-    // Precedência cadastral: master -> vida ativa -> vida histórica -> eventos.
+    // Precedência cadastral: master -> vidas -> eventos.
     const master =
       sintetico ??
       masterIndex.resolve({
         carteirinha: cart,
-        cpf: cpfIdent,
-        nomeNorm: nomeIdent ? normalizarNome(nomeIdent) : null,
+        cpf: vida?.cpf ?? null,
+        nomeNorm: vida?.nome ? normalizarNome(vida.nome) : null,
       })
     const idade = calcularIdade(
-      coalesceStr(
-        master?.dataNascimento,
-        vida?.data_nascimento,
-        vidaCad?.data_nascimento,
-      ),
+      coalesceStr(master?.dataNascimento, vida?.data_nascimento),
     )
     const tipoFinal = coalesceStr(
       master?.tipo,
       vida?.tipo,
-      vidaCad?.tipo,
       util?.tipoBeneficiario,
     )
     const vinculo = normalizarVinculo(tipoFinal)
     return {
       carteirinha: cart,
-      nome: coalesceStr(
-        master?.nome,
-        vida?.nome,
-        vidaCad?.nome,
-        nomePorCarteirinha.get(cart),
-      ),
-      cpf: coalesceStr(master?.cpf, vida?.cpf, vidaCad?.cpf),
-      plano: coalesceStr(master?.plano, vida?.plano, vidaCad?.plano, util?.plano),
-      empresa: coalesceStr(
-        master?.empresa,
-        vida?.empresa,
-        vidaCad?.empresa,
-        util?.empresa,
-      ),
+      nome: coalesceStr(master?.nome, vida?.nome, nomePorCarteirinha.get(cart)),
+      cpf: coalesceStr(master?.cpf, vida?.cpf),
+      plano: coalesceStr(master?.plano, vida?.plano, util?.plano),
+      empresa: coalesceStr(master?.empresa, vida?.empresa, util?.empresa),
       subCodigo: util?.subCodigo ?? null,
       tipoBeneficiario: tipoFinal,
       titular: vinculo === 'TITULAR',
       vinculo,
-      sexo: coalesceStr(master?.sexo, vida?.sexo, vidaCad?.sexo),
+      sexo: coalesceStr(master?.sexo, vida?.sexo),
       idade,
       status:
-        coalesceStr(master?.status, vida?.status, vidaCad?.status) ??
-        (util ? 'ATIVO' : null),
-      // Mantém a semântica de população: "cadastrado" = presente no Cadastro
-      // Mestre ou na base de vidas da competência ativa. O cadastro histórico
-      // (vidaCad) só enriquece campos (idade, sexo etc.), não amplia a base.
+        coalesceStr(master?.status, vida?.status) ?? (util ? 'ATIVO' : null),
       cadastrado: !!master || !!vida,
       utilizou: !!util,
       valorUtilizado: util?.valor ?? 0,
