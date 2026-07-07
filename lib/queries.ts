@@ -1408,6 +1408,7 @@ export type ColaboradoresResult = {
   totalVidas: number
   totalTitulares: number
   totalDependentes: number
+  totalSemClassificacao: number
   vidasComUtilizacao: number
   vidasSemUtilizacao: number
   vidasCadastradas: number // presentes na base de vidas elegíveis
@@ -1751,6 +1752,10 @@ export async function getColaboradores(
   const totalDependentes = populacao.filter(
     (c) => c.vinculo === 'DEPENDENTE',
   ).length
+  // Vidas na base ativa sem tipo Titular/Dependente identificável.
+  const totalSemClassificacao = populacao.filter(
+    (c) => c.vinculo !== 'TITULAR' && c.vinculo !== 'DEPENDENTE',
+  ).length
   // Vidas com utilização = TODOS os utilizadores distintos no período, mesmo os
   // que não constam no cadastro (carteirinhas órfãs ainda contam como utilização).
   const vidasComUtilizacao = colaboradores.filter((c) => c.utilizou).length
@@ -1805,6 +1810,7 @@ export async function getColaboradores(
     totalVidas,
     totalTitulares,
     totalDependentes,
+    totalSemClassificacao,
     vidasComUtilizacao,
     vidasSemUtilizacao: Math.max(0, totalVidas - vidasComUtilizacao),
     vidasCadastradas,

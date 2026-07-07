@@ -8,6 +8,7 @@ import {
   ArrowUp,
   ArrowUpDown,
   Activity,
+  AlertTriangle,
   Coins,
   HeartPulse,
   Pencil,
@@ -17,6 +18,7 @@ import {
   Upload,
   UserCheck,
   Users,
+  UserMinus,
   UserX,
   Wallet,
   X,
@@ -60,6 +62,10 @@ const MODOS: { value: Modo; label: string }[] = [
 
 const pct = (v: number) =>
   v.toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 })
+
+// Percentual de "parte" sobre "total", formatado em pt-BR (0 se total = 0).
+const pctDe = (parte: number, total: number) =>
+  pct(total > 0 ? (parte / total) * 100 : 0)
 
 // Converte competência "YYYY-MM" para "MM/YYYY" para exibição.
 function formatarCompetencia(comp: string): string {
@@ -434,15 +440,15 @@ export function ColaboradoresExplorer({
         </CardContent>
       </Card>
 
-      {/* KPIs populacionais */}
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-3 xl:grid-cols-6">
+      {/* Composição da população (Base de Vidas ativa) */}
+      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         <StatCard
           label="Total de Vidas"
           value={formatNumber(data.totalVidas)}
           icon={Users}
           hint={
             data.temBaseVidas
-              ? `${formatNumber(data.vidasCadastradas)} na base cadastral`
+              ? 'na base de vidas ativa'
               : 'a partir da utilização'
           }
         />
@@ -450,8 +456,24 @@ export function ColaboradoresExplorer({
           label="Titulares"
           value={formatNumber(data.totalTitulares)}
           icon={UserCheck}
-          hint={`${formatNumber(data.totalDependentes)} dependentes`}
+          hint={`${pctDe(data.totalTitulares, data.totalVidas)}% do total`}
         />
+        <StatCard
+          label="Dependentes"
+          value={formatNumber(data.totalDependentes)}
+          icon={Users}
+          hint={`${pctDe(data.totalDependentes, data.totalVidas)}% do total`}
+        />
+        <StatCard
+          label="Sem Classificação"
+          value={formatNumber(data.totalSemClassificacao)}
+          icon={UserMinus}
+          hint="sem tipo titular/dependente"
+        />
+      </div>
+
+      {/* KPIs de utilização e financeiro */}
+      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         <StatCard
           label="Com Utilização"
           value={formatNumber(data.vidasComUtilizacao)}
@@ -477,6 +499,34 @@ export function ColaboradoresExplorer({
           hint="por vida elegível"
         />
       </div>
+
+      {data.temBaseVidas && data.totalSemClassificacao > 0 && (
+        <div className="flex items-start gap-3 rounded-xl border border-amber-500/30 bg-amber-500/[0.07] p-5">
+          <span className="mt-0.5 flex size-10 shrink-0 items-center justify-center rounded-lg bg-amber-500/15 text-amber-500">
+            <AlertTriangle className="size-5" aria-hidden="true" />
+          </span>
+          <div>
+            <p className="text-sm font-semibold text-foreground">
+              Vidas sem classificação titular/dependente
+            </p>
+            <p className="mt-1 max-w-2xl text-pretty text-sm text-muted-foreground">
+              Existem{' '}
+              <span className="font-medium text-foreground">
+                {formatNumber(data.totalSemClassificacao)}
+              </span>{' '}
+              {data.totalSemClassificacao === 1
+                ? 'vida sem classificação'
+                : 'vidas sem classificação'}{' '}
+              titular/dependente na competência ativa
+              {data.competenciaAtiva
+                ? ` (${formatarCompetencia(data.competenciaAtiva)})`
+                : ''}
+              . Revise o campo Tipo na base de vidas para que a composição
+              fique completa.
+            </p>
+          </div>
+        </div>
+      )}
 
       {data.temBaseVidas && data.utilizadoresForaDaBase > 0 && (
         <div className="flex flex-col gap-4 rounded-xl border border-amber-500/30 bg-amber-500/[0.07] p-5 sm:flex-row sm:items-center sm:justify-between">
