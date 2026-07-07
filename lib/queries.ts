@@ -18,6 +18,57 @@ import { normalizarNome } from '@/lib/people-analytics/rh'
 
 type SupabaseServer = Awaited<ReturnType<typeof createClient>>
 
+// A tabela `eventos_utilizacao` é a base bruta/auditável (todo import cru cai
+// nela, sem deduplicação) e deve permanecer intocada. Todas as leituras
+// analíticas (Dashboard Executivo, Radar de Risco, Ranking de Beneficiários/
+// Prestadores, Jornada Assistencial, PDF Executivo) usam esta view, que
+// remove as linhas marcadas em `eventos_duplicados_marcados` (reimportação do
+// arquivo cumulativo 81938.txt + duplicatas confirmadas por
+// COD_DOCUMENTO/NUM_GUIA_TISS — auditoria de 2026-07-07).
+const EVENTOS_UTILIZACAO_VIEW = 'eventos_utilizacao_dedup'
+
+// Indicador de auditoria (bruto x deduplicado) exposto no Dashboard Executivo.
+export type AuditoriaDuplicidade = {
+  valorBruto: number
+  valorDeduplicado: number
+  valorRemovido: number
+  percentualCorrigido: number // valorRemovido ÷ valorBruto × 100
+  eventosBrutos: number
+  eventosDeduplicados: number
+  eventosRemovidos: number
+}
+
+// Calcula o indicador de auditoria a partir da view `eventos_duplicados_marcados`
+// (linhas excluídas), sem precisar reler a tabela bruta inteira. Respeita o
+// filtro de competência quando informado, para acompanhar o recorte do dashboard.
+async function getAuditoriaDuplicidade(
+  supabase: SupabaseServer,
+  valorDeduplicado: number,
+  eventosDeduplicados: number,
+  mes?: string[],
+): Promise<AuditoriaDuplicidade> {
+  let query = supabase
+    .from('eventos_duplicados_marcados')
+    .select('valor_pago, competencia_evento')
+  if (mes && mes.length > 0) {
+    query = query.in('competencia_evento', mes)
+  }
+  const { data } = await query
+  const rows = (data ?? []) as { valor_pago: number; competencia_evento: string | null }[]
+  const valorRemovido = rows.reduce((a, r) => a + Number(r.valor_pago ?? 0), 0)
+  const eventosRemovidos = rows.length
+  const valorBruto = valorDeduplicado + valorRemovido
+  return {
+    valorBruto,
+    valorDeduplicado,
+    valorRemovido,
+    percentualCorrigido: valorBruto > 0 ? Number(((valorRemovido / valorBruto) * 100).toFixed(1)) : 0,
+    eventosBrutos: eventosDeduplicados + eventosRemovidos,
+    eventosDeduplicados,
+    eventosRemovidos,
+  }
+}
+
 // Mapa carteirinha -> nome (base auxiliar importada). Usado apenas para a
 // forma de EXIBIÇÃO dos beneficiários; nunca afeta cálculos ou agrupamentos.
 async function fetchNomesPorCarteirinha(
@@ -475,6 +526,9 @@ export type DashboardData = {
   faixaEtaria: FaixaRowFull[]
   tipoUtilizacao: TipoUtilRow[]
   periodo: { inicio: string | null; fim: string | null }
+  // Indicador de auditoria: valor bruto (tabela crua) x deduplicado (view),
+  // valor removido por duplicidade confirmada e percentual de ajuste.
+  auditoriaDuplicidade: AuditoriaDuplicidade
 }
 
 function faixaDaIdade(idade: number | null): string {
@@ -581,7 +635,7 @@ export async function getDashboardData(
   const eventos: EventoRow[] = []
   for (;;) {
     const { data, error } = await supabase
-      .from('eventos_utilizacao')
+      .from(EVENTOS_UTILIZACAO_VIEW)
       .select(
         'apolice_id, subestipulante_id, cod_usuario, tipo_beneficiario, idade, plano, prestador_nome, prestador_cnpj, categoria_atendimento, servico_principal, servico, grupo_estatistico, valor_pago, data_atendimento, internacao, saude_mental, competencia',
       )
@@ -638,6 +692,15 @@ export async function getDashboardData(
       faixaEtaria: [],
       tipoUtilizacao: [],
       periodo: { inicio: null, fim: null },
+      auditoriaDuplicidade: {
+        valorBruto: 0,
+        valorDeduplicado: 0,
+        valorRemovido: 0,
+        percentualCorrigido: 0,
+        eventosBrutos: 0,
+        eventosDeduplicados: 0,
+        eventosRemovidos: 0,
+      },
     }
   }
 
@@ -1092,6 +1155,13 @@ export async function getDashboardData(
       ? Number(((valorUtilizado / valorFatura) * 100).toFixed(1))
       : null
 
+  const auditoriaDuplicidade = await getAuditoriaDuplicidade(
+    supabase,
+    valorUtilizado,
+    filtrados.length,
+    filtros.mes,
+  )
+
   return {
     hasData: true,
     competenciaAtual,
@@ -1151,6 +1221,7 @@ export async function getDashboardData(
     faixaEtaria,
     tipoUtilizacao,
     periodo: { inicio: periodoInicio, fim: periodoFim },
+    auditoriaDuplicidade,
   }
 }
 
@@ -1308,7 +1379,7 @@ export async function getEventosDetalhados(): Promise<EventoDetalhado[]> {
   const out: EventoDetalhado[] = []
   for (;;) {
     const { data, error } = await supabase
-      .from('eventos_utilizacao')
+      .from(EVENTOS_UTILIZACAO_VIEW)
       .select(
         'id, apolice_id, subestipulante_id, cod_usuario, tipo_beneficiario, sexo, idade, plano, prestador_nome, prestador_cnpj, servico_principal, servico, grupo_estatistico, categoria_atendimento, internacao, saude_mental, valor_apresentado, valor_pago, valor_copart, valor_empresa, data_atendimento, data_pagamento, competencia',
       )

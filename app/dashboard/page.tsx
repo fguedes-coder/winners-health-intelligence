@@ -213,6 +213,37 @@ export default async function DashboardPage({
           </Link>
         )}
 
+        {/* Indicador de auditoria: valores já deduplicados (reimportação do
+            arquivo cumulativo 81938.txt + duplicatas confirmadas por
+            COD_DOCUMENTO/NUM_GUIA_TISS). Só aparece quando há algo removido
+            no recorte atual. */}
+        {data.auditoriaDuplicidade.valorRemovido > 0 && (
+          <div className="flex flex-col gap-2 rounded-xl border border-primary/30 bg-primary/5 px-4 py-3 text-sm sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex items-center gap-3">
+              <Info className="size-4 shrink-0 text-primary" />
+              <span className="text-pretty text-muted-foreground">
+                Valores já corrigidos: {formatBRL(data.auditoriaDuplicidade.valorRemovido)}{' '}
+                em duplicidades foram removidos da utilização exibida (
+                {data.auditoriaDuplicidade.percentualCorrigido.toLocaleString('pt-BR', {
+                  maximumFractionDigits: 1,
+                })}
+                % de ajuste).
+              </span>
+            </div>
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
+              <span>
+                Bruto: <span className="font-semibold text-foreground">{formatBRL(data.auditoriaDuplicidade.valorBruto)}</span>
+              </span>
+              <span>
+                Deduplicado: <span className="font-semibold text-foreground">{formatBRL(data.auditoriaDuplicidade.valorDeduplicado)}</span>
+              </span>
+              <span>
+                Removido: <span className="font-semibold text-foreground">{formatBRL(data.auditoriaDuplicidade.valorRemovido)}</span>
+              </span>
+            </div>
+          </div>
+        )}
+
         {/* KPIs estratégicos — protagonistas da primeira dobra */}
         <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
           <KpiCard
