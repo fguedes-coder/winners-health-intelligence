@@ -2,6 +2,14 @@
 
 import { createClient } from '@/lib/supabase/server'
 import { revalidatePath } from 'next/cache'
+import {
+  lerArquivoCadastro,
+  gerarPreviewAtualizarCadastro,
+  type LinhaArquivo,
+  type VidaAlvo,
+  type PreviewAtualizarCadastro,
+  type DiagnosticoArquivo,
+} from '@/lib/colaboradores/atualizar-cadastro'
 
 // Telas que exibem o nome do beneficiário resolvido pela carteirinha.
 // Como `beneficiario_nomes` é a fonte ÚNICA de nomes, qualquer inclusão,
@@ -611,4 +619,136 @@ export async function salvarNome(
   // Propaga a mudança para todo o dashboard automaticamente.
   revalidarTelasComNomes()
   return { ok: true }
+}
+
+// ============================================================
+// ATUALIZAR CADASTRO (CPF / DATA DE NASCIMENTO)
+//
+// Localiza beneficiários JÁ EXISTENTES na Base de Vidas oficial (competência
+// ativa) a partir de um arquivo (ex.: MECSAS) e preenche CPF/nascimento
+// somente quando vazios. Nunca cria beneficiário novo, nunca altera
+// plano/empresa/carteirinha/vínculo/status.
+// ============================================================
+
+export type PreviewAtualizarCadastroResult = {
+  error?: string
+  competencia?: string
+  linhas?: LinhaArquivo[]
+  preview?: PreviewAtualizarCadastro
+  diagnostico?: DiagnosticoArquivo
+}
+
+// Só leitura: parseia o arquivo e compara contra a Base de Vidas oficial
+// (competência ativa). Nenhum INSERT/UPDATE acontece aqui.
+export async function preverAtualizarCadastro(
+  formData: FormData,
+): Promise<PreviewAtualizarCadastroResult> {
+  const file = formData.get('arquivo')
+  if (!(file instanceof File) || file.size === 0) {
+    return { error: 'Selecione um arquivo XLSX ou CSV.' }
+  }
+
+  let linhas: LinhaArquivo[]
+  let diagnostico: DiagnosticoArquivo
+  try {
+    const buf = Buffer.from(await file.arrayBuffer())
+    const lido = lerArquivoCadastro(buf)
+    linhas = lido.linhas
+    diagnostico = lido.diagnostico
+  } catch (e) {
+    return { error: `Falha ao ler o arquivo: ${(e as Error).message}` }
+  }
+  if (linhas.length === 0) {
+    return {
+      error:
+        'Nenhum beneficiário reconhecido no arquivo. Confira a aba, a linha de cabeçalho e as colunas (Carteirinha, CPF, Nome, Data de nascimento).',
+      diagnostico,
+    }
+  }
+
+  const supabase = await createClient()
+  const { data: competData } = await supabase
+    .from('beneficiario_vidas')
+    .select('competencia')
+    .order('competencia', { ascending: false })
+    .limit(1)
+  const competencia =
+    (competData?.[0] as { competencia: string } | undefined)?.competencia ?? null
+  if (!competencia) {
+    return {
+      error:
+        'Não há Base de Vidas importada ainda. Importe a base de vidas antes de usar esta função.',
+      diagnostico,
+    }
+  }
+
+  const { data: vidasData } = await supabase
+    .from('beneficiario_vidas')
+    .select('carteirinha, nome, cpf, data_nascimento')
+    .eq('competencia', competencia)
+  const vidas = (vidasData ?? []) as VidaAlvo[]
+
+  const preview = gerarPreviewAtualizarCadastro(linhas, vidas)
+
+  return { competencia, linhas, preview, diagnostico }
+}
+
+export type ConfirmarAtualizarCadastroResult = {
+  error?: string
+  atualizados?: number
+  naoEncontrados?: number
+  ignorados?: number
+}
+
+// Recebe as linhas já normalizadas do passo de prévia (sem reenviar o
+// arquivo) + a competência confirmada. Recarrega a Base de Vidas do zero
+// (evita condição de corrida com o que foi previsto) e só então grava:
+// UPDATE de CPF/Data de nascimento nos beneficiários já encontrados. NUNCA
+// insere — "não encontrados" ficam só no relatório, nunca viram beneficiário
+// novo. Nunca toca em plano/empresa/carteirinha/vínculo/status, nem em
+// outras competências além da informada.
+export async function confirmarAtualizarCadastro(
+  competencia: string,
+  linhas: LinhaArquivo[],
+): Promise<ConfirmarAtualizarCadastroResult> {
+  if (!linhas || linhas.length === 0) {
+    return { error: 'Nada para confirmar — refaça a análise do arquivo.' }
+  }
+  if (!/^\d{4}-\d{2}$/.test(competencia)) {
+    return { error: 'Competência inválida.' }
+  }
+
+  const supabase = await createClient()
+
+  const { data: vidasData } = await supabase
+    .from('beneficiario_vidas')
+    .select('carteirinha, nome, cpf, data_nascimento')
+    .eq('competencia', competencia)
+  const vidas = (vidasData ?? []) as VidaAlvo[]
+
+  const preview = gerarPreviewAtualizarCadastro(linhas, vidas)
+
+  for (const item of preview.atualizacoes) {
+    const patch: Record<string, string> = {}
+    for (const c of item.campos) {
+      patch[c.campo === 'cpf' ? 'cpf' : 'data_nascimento'] = c.valorNovo
+    }
+    const { error } = await supabase
+      .from('beneficiario_vidas')
+      .update({ ...patch, updated_at: new Date().toISOString() })
+      .eq('competencia', competencia)
+      .eq('carteirinha', item.carteirinha)
+    if (error) {
+      return { error: `Erro ao atualizar ${item.carteirinha}: ${error.message}` }
+    }
+  }
+
+  revalidarTelasComNomes()
+  revalidatePath('/colaboradores/diagnostico')
+
+  return {
+    atualizados: preview.atualizacoes.length,
+    naoEncontrados: preview.naoEncontrados.length,
+    ignorados: preview.conflitos.length,
+  }
 }

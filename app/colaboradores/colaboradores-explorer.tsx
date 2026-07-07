@@ -10,6 +10,7 @@ import {
   Activity,
   Coins,
   HeartPulse,
+  IdCard,
   Pencil,
   ScanSearch,
   Search,
@@ -34,7 +35,19 @@ import {
 import { formatBRL, formatNumber } from '@/lib/data'
 import { formatCompetencia } from '@/lib/categorias'
 import type { ColaboradoresResult, ColaboradorRow } from '@/lib/queries'
-import { importarNomes, importarVidas, salvarNome } from './actions'
+import {
+  confirmarAtualizarCadastro,
+  importarNomes,
+  importarVidas,
+  preverAtualizarCadastro,
+  salvarNome,
+  type PreviewAtualizarCadastroResult,
+} from './actions'
+
+const LABEL_CAMPO_ATUALIZAVEL: Record<'cpf' | 'dataNascimento', string> = {
+  cpf: 'CPF',
+  dataNascimento: 'Data de nascimento',
+}
 
 type Modo = 'acumulado' | 'mes' | 'ano' | 'periodo'
 type UtilFiltro = 'todos' | 'com' | 'sem'
@@ -82,6 +95,7 @@ export function ColaboradoresExplorer({
   const [isPending, startTransition] = useTransition()
   const fileVidasRef = useRef<HTMLInputElement>(null)
   const fileNomesRef = useRef<HTMLInputElement>(null)
+  const fileCadastroRef = useRef<HTMLInputElement>(null)
 
   const [busca, setBusca] = useState(buscaInicial)
   const [utilFiltro, setUtilFiltro] = useState<UtilFiltro>('todos')
@@ -103,6 +117,49 @@ export function ColaboradoresExplorer({
   const [editando, setEditando] = useState<string | null>(null)
   const [nomeEdit, setNomeEdit] = useState('')
   const [salvando, startSalvar] = useTransition()
+
+  // Atualizar cadastro (CPF / data de nascimento) contra a Base de Vidas ativa.
+  const [previewCadastro, setPreviewCadastro] =
+    useState<PreviewAtualizarCadastroResult | null>(null)
+  const [analisandoCadastro, startAnalisarCadastro] = useTransition()
+  const [confirmandoCadastro, startConfirmarCadastro] = useTransition()
+  const [resultadoCadastro, setResultadoCadastro] = useState<string | null>(
+    null,
+  )
+
+  function handleArquivoCadastro(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setResultadoCadastro(null)
+    const formData = new FormData()
+    formData.set('arquivo', file)
+    startAnalisarCadastro(async () => {
+      const res = await preverAtualizarCadastro(formData)
+      if (fileCadastroRef.current) fileCadastroRef.current.value = ''
+      setPreviewCadastro(res)
+    })
+  }
+
+  function confirmarCadastro() {
+    if (!previewCadastro?.competencia || !previewCadastro.linhas) return
+    startConfirmarCadastro(async () => {
+      const res = await confirmarAtualizarCadastro(
+        previewCadastro.competencia as string,
+        previewCadastro.linhas!,
+      )
+      if (res.error) {
+        setResultadoCadastro(`Erro: ${res.error}`)
+        return
+      }
+      setResultadoCadastro(
+        `${res.atualizados ?? 0} beneficiário(s) atualizado(s). ` +
+          `${res.naoEncontrados ?? 0} não encontrado(s) (não criados). ` +
+          `${res.ignorados ?? 0} ignorado(s) por nome ambíguo.`,
+      )
+      setPreviewCadastro(null)
+      router.refresh()
+    })
+  }
 
   function aplicar(next: {
     modo?: Modo
@@ -619,6 +676,139 @@ export function ColaboradoresExplorer({
               }`}
             >
               {importMsg.texto}
+            </p>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Atualizar cadastro (CPF / data de nascimento) */}
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="flex items-center gap-2 text-sm font-semibold">
+            <IdCard className="size-4 text-primary" />
+            Atualizar cadastro (CPF / data de nascimento)
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-4">
+          <p className="text-xs leading-relaxed text-muted-foreground">
+            Localiza beneficiários já existentes na Base de Vidas oficial
+            (competência ativa
+            {data.competenciaAtiva
+              ? `: ${formatarCompetencia(data.competenciaAtiva)}`
+              : ''}
+            ) a partir de um arquivo (ex.: MECSAS) e preenche CPF e/ou data de
+            nascimento SOMENTE quando estiverem vazios. A idade é sempre
+            recalculada a partir da data de nascimento. Nunca cria
+            beneficiário novo; nunca altera plano, empresa, carteirinha,
+            vínculo ou status.
+          </p>
+
+          <input
+            ref={fileCadastroRef}
+            type="file"
+            accept=".csv,.xlsx,.xls"
+            className="hidden"
+            onChange={handleArquivoCadastro}
+          />
+          <Button
+            type="button"
+            variant="outline"
+            disabled={analisandoCadastro}
+            className="w-fit"
+            onClick={() => fileCadastroRef.current?.click()}
+          >
+            <Upload className="size-4" />
+            {analisandoCadastro ? 'Analisando…' : 'Analisar arquivo'}
+          </Button>
+
+          {previewCadastro?.error && (
+            <p className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+              {previewCadastro.error}
+            </p>
+          )}
+
+          {previewCadastro?.preview && (
+            <div className="flex flex-col gap-3 rounded-lg border border-border p-4">
+              <div className="flex flex-wrap items-center gap-3 text-sm">
+                <Badge variant="default">
+                  {previewCadastro.preview.atualizacoes.length} serão atualizados
+                </Badge>
+                <Badge variant="neutral">
+                  {previewCadastro.preview.semAlteracao} já completos
+                </Badge>
+                <Badge variant="neutral">
+                  {previewCadastro.preview.naoEncontrados.length} não
+                  encontrados (não serão criados)
+                </Badge>
+                {previewCadastro.preview.conflitos.length > 0 && (
+                  <Badge variant="neutral">
+                    {previewCadastro.preview.conflitos.length} conflitos (nome
+                    ambíguo)
+                  </Badge>
+                )}
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Comparado contra {previewCadastro.preview.totalVidasCompetencia}{' '}
+                vida(s) da competência{' '}
+                {formatarCompetencia(previewCadastro.competencia ?? '')}.
+              </p>
+
+              {previewCadastro.preview.atualizacoes.length > 0 && (
+                <div className="overflow-x-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Beneficiário</TableHead>
+                        <TableHead>Carteirinha</TableHead>
+                        <TableHead>Campo</TableHead>
+                        <TableHead>Atual</TableHead>
+                        <TableHead>Novo</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {previewCadastro.preview.atualizacoes.flatMap((item) =>
+                        item.campos.map((c) => (
+                          <TableRow key={`${item.carteirinha}-${c.campo}`}>
+                            <TableCell>{item.nome ?? '—'}</TableCell>
+                            <TableCell className="font-mono text-xs">
+                              {item.carteirinha}
+                            </TableCell>
+                            <TableCell>
+                              {LABEL_CAMPO_ATUALIZAVEL[c.campo]}
+                            </TableCell>
+                            <TableCell className="text-muted-foreground">
+                              {c.valorAtual ?? '—'}
+                            </TableCell>
+                            <TableCell className="font-medium">
+                              {c.valorNovo}
+                            </TableCell>
+                          </TableRow>
+                        )),
+                      )}
+                    </TableBody>
+                  </Table>
+                </div>
+              )}
+
+              <Button
+                type="button"
+                disabled={
+                  confirmandoCadastro ||
+                  previewCadastro.preview.atualizacoes.length === 0
+                }
+                className="w-fit"
+                onClick={confirmarCadastro}
+              >
+                {confirmandoCadastro
+                  ? 'Salvando…'
+                  : `Confirmar atualização (${previewCadastro.preview.atualizacoes.length})`}
+              </Button>
+            </div>
+          )}
+
+          {resultadoCadastro && (
+            <p className="rounded-md border border-primary/40 bg-primary/10 px-3 py-2 text-sm text-foreground">
+              {resultadoCadastro}
             </p>
           )}
         </CardContent>

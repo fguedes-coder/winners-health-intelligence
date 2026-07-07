@@ -12,7 +12,6 @@ const PROTECTED_PREFIXES = [
   '/configuracoes',
   '/utilizacao',
   '/colaboradores',
-  '/cadastro-master',
   '/jornada-assistencial',
   '/radar-risco',
   '/people-analytics',

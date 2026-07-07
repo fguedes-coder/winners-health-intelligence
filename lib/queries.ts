@@ -9,8 +9,6 @@ import {
 } from '@/lib/categorias'
 import { beneficiarioLabel } from '@/lib/display-prefs'
 import { getBenefDisplay } from '@/lib/display-prefs-server'
-import { loadMasterIndex, type MasterCadastro } from '@/lib/cadastro-master/read'
-import { normalizarNome } from '@/lib/people-analytics/rh'
 
 type SupabaseServer = Awaited<ReturnType<typeof createClient>>
 
@@ -1527,13 +1525,11 @@ export async function getColaboradores(
     { data: subsData },
     { data: nomesData },
     { data: vidasData },
-    masterIndex,
   ] = await Promise.all([
     supabase.from('apolices').select('id, numero, cliente'),
     supabase.from('subestipulantes').select('id, codigo, razao_social'),
     supabase.from('beneficiario_nomes').select('carteirinha, nome'),
     vidasQuery,
-    loadMasterIndex(supabase),
   ])
 
   const apoliceById = new Map(
@@ -1637,66 +1633,29 @@ export async function getColaboradores(
     from += PAGE
   }
 
-  // Universo = Cadastro Mestre ∪ base de vidas elegíveis ∪ carteirinhas que
-  // utilizaram. O Cadastro Mestre é a fonte de MAIOR precedência e amplia a
-  // população: registros exclusivos do mestre também aparecem nas telas.
-  const vidaCpfSet = new Set<string>()
-  for (const v of vidaPorCarteirinha.values()) {
-    const c = (v.cpf ?? '').replace(/\D/g, '')
-    if (c) vidaCpfSet.add(c)
-  }
-  // Registros do mestre sem carteirinha que NÃO casam por CPF com uma vida
-  // recebem uma chave sintética (aparecem em listagens/qualidade, sem ficha).
-  const sinteticoPorChave = new Map<string, MasterCadastro>()
-  for (const m of masterIndex.semCarteirinha) {
-    const cpfDig = (m.cpf ?? '').replace(/\D/g, '')
-    if (cpfDig && vidaCpfSet.has(cpfDig)) continue // será resolvido via CPF
-    sinteticoPorChave.set(`master:${m.id}`, m)
-  }
-
-  const universo = new Set<string>([
-    ...vidaPorCarteirinha.keys(),
-    ...mapa.keys(),
-    ...masterIndex.byCarteirinha.keys(),
-    ...sinteticoPorChave.keys(),
-  ])
+  // Universo = base de vidas elegíveis ∪ carteirinhas que utilizaram.
+  const universo = new Set<string>([...vidaPorCarteirinha.keys(), ...mapa.keys()])
 
   const colaboradores: ColaboradorRow[] = [...universo].map((cart) => {
-    const sintetico = sinteticoPorChave.get(cart)
-    const util = sintetico ? undefined : mapa.get(cart)
-    const vida = sintetico ? undefined : vidaPorCarteirinha.get(cart)
-    // Precedência cadastral: master -> vidas -> eventos.
-    const master =
-      sintetico ??
-      masterIndex.resolve({
-        carteirinha: cart,
-        cpf: vida?.cpf ?? null,
-        nomeNorm: vida?.nome ? normalizarNome(vida.nome) : null,
-      })
-    const idade = calcularIdade(
-      coalesceStr(master?.dataNascimento, vida?.data_nascimento),
-    )
-    const tipoFinal = coalesceStr(
-      master?.tipo,
-      vida?.tipo,
-      util?.tipoBeneficiario,
-    )
+    const util = mapa.get(cart)
+    const vida = vidaPorCarteirinha.get(cart)
+    const idade = calcularIdade(vida?.data_nascimento ?? null)
+    const tipoFinal = coalesceStr(vida?.tipo, util?.tipoBeneficiario)
     const vinculo = normalizarVinculo(tipoFinal)
     return {
       carteirinha: cart,
-      nome: coalesceStr(master?.nome, vida?.nome, nomePorCarteirinha.get(cart)),
-      cpf: coalesceStr(master?.cpf, vida?.cpf),
-      plano: coalesceStr(master?.plano, vida?.plano, util?.plano),
-      empresa: coalesceStr(master?.empresa, vida?.empresa, util?.empresa),
+      nome: coalesceStr(vida?.nome, nomePorCarteirinha.get(cart)),
+      cpf: coalesceStr(vida?.cpf),
+      plano: coalesceStr(vida?.plano, util?.plano),
+      empresa: coalesceStr(vida?.empresa, util?.empresa),
       subCodigo: util?.subCodigo ?? null,
       tipoBeneficiario: tipoFinal,
       titular: vinculo === 'TITULAR',
       vinculo,
-      sexo: coalesceStr(master?.sexo, vida?.sexo),
+      sexo: coalesceStr(vida?.sexo),
       idade,
-      status:
-        coalesceStr(master?.status, vida?.status) ?? (util ? 'ATIVO' : null),
-      cadastrado: !!master || !!vida,
+      status: coalesceStr(vida?.status) ?? (util ? 'ATIVO' : null),
+      cadastrado: !!vida,
       utilizou: !!util,
       valorUtilizado: util?.valor ?? 0,
       eventos: util?.eventos ?? 0,
@@ -1710,8 +1669,7 @@ export async function getColaboradores(
   // própria base (independe de utilização). Sem base, usamos as carteirinhas
   // observadas na utilização como aproximação da população.
   const vidasCadastradas = colaboradores.filter((c) => c.cadastrado).length
-  // Há base de referência quando existe Cadastro Mestre OU Base de Vidas.
-  const temBase = temBaseVidas || masterIndex.temMaster
+  const temBase = temBaseVidas
   const populacao = temBase
     ? colaboradores.filter((c) => c.cadastrado)
     : colaboradores
@@ -1907,13 +1865,11 @@ export async function getDiagnosticoBase(
     { data: subsData },
     { data: nomesData },
     { data: vidasData },
-    masterIndex,
   ] = await Promise.all([
     supabase.from('apolices').select('id, numero, cliente'),
     supabase.from('subestipulantes').select('id, codigo, razao_social'),
     supabase.from('beneficiario_nomes').select('carteirinha, nome'),
     vidasQuery,
-    loadMasterIndex(supabase),
   ])
 
   // Data da última atualização da base de vidas elegíveis.
@@ -1950,24 +1906,11 @@ export async function getDiagnosticoBase(
   }))
   const temBaseVidas = vidasRaw.length > 0
 
-  // O Cadastro Mestre também compõe a base elegível (amplia a população).
-  // Registros do mestre com carteirinha ainda não presente entram na base.
-  const cartVidas = new Set(vidasRaw.map((v) => v.carteirinha))
-  const vidasMaster: VidaMini[] = []
-  for (const m of masterIndex.list) {
-    const cart = (m.carteirinha ?? '').trim()
-    if (cart && cartVidas.has(cart)) continue
-    vidasMaster.push({
-      carteirinha: cart || `master:${m.id}`,
-      nome: m.nome,
-      cpf: m.cpf,
-    })
-  }
-  const vidas = [...vidasRaw, ...vidasMaster]
+  const vidas = vidasRaw
   const vidaPorCarteirinha = new Map<string, VidaMini>(
     vidas.map((v) => [v.carteirinha, v]),
   )
-  const temBase = temBaseVidas || masterIndex.temMaster
+  const temBase = temBaseVidas
 
   // Índices de reconciliação (nome/cpf → carteirinhas na base elegível).
   const porNome = new Map<string, VidaMini[]>()
@@ -2225,7 +2168,6 @@ export async function getBeneficiarioPerfil(
     { data: nomeArr },
     { data: apolicesData },
     { data: subsData },
-    masterIndex,
   ] = await Promise.all([
     supabase
       .from('beneficiario_vidas')
@@ -2243,7 +2185,6 @@ export async function getBeneficiarioPerfil(
       .limit(1),
     supabase.from('apolices').select('id, cliente'),
     supabase.from('subestipulantes').select('id, razao_social'),
-    loadMasterIndex(supabase),
   ])
 
   const apoliceById = new Map(
@@ -2259,12 +2200,6 @@ export async function getBeneficiarioPerfil(
 
   const vida = (vidaArr?.[0] as VidaCadastro | undefined) ?? null
   const nomeFallback = (nomeArr?.[0] as { nome: string } | undefined)?.nome
-  // Cadastro Mestre (maior precedência): resolve por carteirinha -> CPF -> nome.
-  const master = masterIndex.resolve({
-    carteirinha: cart,
-    cpf: vida?.cpf ?? null,
-    nomeNorm: vida?.nome ? normalizarNome(vida.nome) : null,
-  })
 
   // Agrega TODOS os eventos da carteirinha (acumulado histórico).
   const catMap = new Map<string, { valor: number; eventos: number }>()
@@ -2332,8 +2267,8 @@ export async function getBeneficiarioPerfil(
     from += PAGE
   }
 
-  // Se não há cadastro (mestre ou vidas) nem utilização, a carteirinha não existe.
-  if (!master && !vida && eventosTotal === 0 && !nomeFallback) return null
+  // Se não há cadastro (vidas) nem utilização, a carteirinha não existe.
+  if (!vida && eventosTotal === 0 && !nomeFallback) return null
 
   const categoriasGerenciais = [...catMap.entries()]
     .map(([nome, v]) => ({
@@ -2352,26 +2287,22 @@ export async function getBeneficiarioPerfil(
     }))
     .sort((a, b) => a.competencia.localeCompare(b.competencia))
 
-  // Fonte consolidada com precedência master -> vidas -> eventos.
-  const tipoFinal = coalesceStr(master?.tipo, vida?.tipo, tipoUtil)
+  // Fonte consolidada com precedência vidas -> eventos.
+  const tipoFinal = coalesceStr(vida?.tipo, tipoUtil)
   return {
     carteirinha: cart,
-    nome: coalesceStr(master?.nome, vida?.nome, nomeFallback),
-    cpf: coalesceStr(master?.cpf, vida?.cpf),
+    nome: coalesceStr(vida?.nome, nomeFallback),
+    cpf: coalesceStr(vida?.cpf),
     vinculo: normalizarVinculo(tipoFinal),
     tipoBeneficiario: tipoFinal,
-    sexo: coalesceStr(master?.sexo, vida?.sexo, sexoUtil),
-    idade: calcularIdade(
-      coalesceStr(master?.dataNascimento, vida?.data_nascimento),
-    ),
-    dataNascimento: coalesceStr(master?.dataNascimento, vida?.data_nascimento),
-    plano: coalesceStr(master?.plano, vida?.plano, planoUtil),
-    empresa: coalesceStr(master?.empresa, vida?.empresa, empresaUtil),
-    dataAdesao: coalesceStr(master?.dataAdesao, vida?.data_adesao),
-    status:
-      coalesceStr(master?.status, vida?.status) ??
-      (eventosTotal > 0 ? 'ATIVO' : null),
-    cadastrado: !!master || !!vida,
+    sexo: coalesceStr(vida?.sexo, sexoUtil),
+    idade: calcularIdade(vida?.data_nascimento ?? null),
+    dataNascimento: coalesceStr(vida?.data_nascimento),
+    plano: coalesceStr(vida?.plano, planoUtil),
+    empresa: coalesceStr(vida?.empresa, empresaUtil),
+    dataAdesao: coalesceStr(vida?.data_adesao),
+    status: coalesceStr(vida?.status) ?? (eventosTotal > 0 ? 'ATIVO' : null),
+    cadastrado: !!vida,
     valorTotal,
     eventosTotal,
     custoMedioEvento: eventosTotal ? valorTotal / eventosTotal : 0,
@@ -2426,12 +2357,10 @@ export async function getQualidadeCadastral(): Promise<QualidadeCadastral> {
     { data: apolicesData },
     { data: subsData },
     { data: vidasData },
-    masterIndex,
   ] = await Promise.all([
     supabase.from('apolices').select('id, cliente'),
     supabase.from('subestipulantes').select('id, razao_social'),
     vidasQuery,
-    loadMasterIndex(supabase),
   ])
 
   const apoliceById = new Map(
@@ -2507,54 +2436,27 @@ export async function getQualidadeCadastral(): Promise<QualidadeCadastral> {
     from += PAGE
   }
 
-  // População de referência: Cadastro Mestre ∪ base de vidas; se nenhum
-  // existir, as carteirinhas observadas na utilização.
-  const vidaCpfSet = new Set<string>()
-  for (const v of vidaPorCarteirinha.values()) {
-    const c = (v.cpf ?? '').replace(/\D/g, '')
-    if (c) vidaCpfSet.add(c)
-  }
-  const sinteticoPorChave = new Map<string, MasterCadastro>()
-  for (const m of masterIndex.semCarteirinha) {
-    const cpfDig = (m.cpf ?? '').replace(/\D/g, '')
-    if (cpfDig && vidaCpfSet.has(cpfDig)) continue
-    sinteticoPorChave.set(`master:${m.id}`, m)
-  }
-  const temBase = temBaseVidas || masterIndex.temMaster
+  // População de referência: base de vidas; se não existir, as carteirinhas
+  // observadas na utilização.
+  const temBase = temBaseVidas
   const universo = temBase
-    ? [
-        ...new Set<string>([
-          ...vidaPorCarteirinha.keys(),
-          ...masterIndex.byCarteirinha.keys(),
-          ...sinteticoPorChave.keys(),
-        ]),
-      ]
+    ? [...vidaPorCarteirinha.keys()]
     : [...utilPorCarteirinha.keys()]
   const total = universo.length
 
-  // Definição dos campos e de onde cada um pode ser obtido. "cadastro" agora
-  // consolida Cadastro Mestre (maior precedência) + Base de Vidas.
+  // Definição dos campos e de onde cada um pode ser obtido.
   const defs: {
     chave: string
     label: string
     fallback: boolean
-    master: (m: MasterCadastro | null) => string | null | undefined
     cadastro: (v: VidaQ | undefined) => string | null | undefined
     util: (u: Util | undefined) => string | null | undefined
   }[] = [
-    {
-      chave: 'cpf',
-      label: 'CPF',
-      fallback: false,
-      master: (m) => m?.cpf,
-      cadastro: (v) => v?.cpf,
-      util: () => null,
-    },
+    { chave: 'cpf', label: 'CPF', fallback: false, cadastro: (v) => v?.cpf, util: () => null },
     {
       chave: 'sexo',
       label: 'Sexo',
       fallback: true,
-      master: (m) => m?.sexo,
       cadastro: (v) => v?.sexo,
       util: (u) => u?.sexo,
     },
@@ -2562,7 +2464,6 @@ export async function getQualidadeCadastral(): Promise<QualidadeCadastral> {
       chave: 'data_nascimento',
       label: 'Data de nascimento',
       fallback: false,
-      master: (m) => m?.dataNascimento,
       cadastro: (v) => v?.data_nascimento,
       util: () => null,
     },
@@ -2570,7 +2471,6 @@ export async function getQualidadeCadastral(): Promise<QualidadeCadastral> {
       chave: 'empresa',
       label: 'Empresa',
       fallback: true,
-      master: (m) => m?.empresa,
       cadastro: (v) => v?.empresa,
       util: (u) => u?.empresa,
     },
@@ -2578,7 +2478,6 @@ export async function getQualidadeCadastral(): Promise<QualidadeCadastral> {
       chave: 'plano',
       label: 'Plano',
       fallback: true,
-      master: (m) => m?.plano,
       cadastro: (v) => v?.plano,
       util: (u) => u?.plano,
     },
@@ -2586,7 +2485,6 @@ export async function getQualidadeCadastral(): Promise<QualidadeCadastral> {
       chave: 'tipo',
       label: 'Tipo (titular/dependente)',
       fallback: true,
-      master: (m) => m?.tipo,
       cadastro: (v) => v?.tipo,
       util: (u) => u?.tipo,
     },
@@ -2594,32 +2492,7 @@ export async function getQualidadeCadastral(): Promise<QualidadeCadastral> {
       chave: 'data_adesao',
       label: 'Data de adesão',
       fallback: false,
-      master: (m) => m?.dataAdesao,
       cadastro: (v) => v?.data_adesao,
-      util: () => null,
-    },
-    {
-      chave: 'data_admissao',
-      label: 'Data de admissão',
-      fallback: false,
-      master: (m) => m?.dataAdmissao,
-      cadastro: () => null,
-      util: () => null,
-    },
-    {
-      chave: 'email',
-      label: 'E-mail',
-      fallback: false,
-      master: (m) => m?.email,
-      cadastro: () => null,
-      util: () => null,
-    },
-    {
-      chave: 'telefone',
-      label: 'Telefone',
-      fallback: false,
-      master: (m) => m?.telefone,
-      cadastro: () => null,
       util: () => null,
     },
   ]
@@ -2628,19 +2501,9 @@ export async function getQualidadeCadastral(): Promise<QualidadeCadastral> {
     let cadastro = 0
     let consolidado = 0
     for (const cart of universo) {
-      const sintetico = sinteticoPorChave.get(cart)
-      const v = sintetico ? undefined : vidaPorCarteirinha.get(cart)
-      const u = sintetico ? undefined : utilPorCarteirinha.get(cart)
-      const m: MasterCadastro | null =
-        sintetico ??
-        masterIndex.resolve({
-          carteirinha: cart,
-          cpf: v?.cpf ?? null,
-          nomeNorm: null,
-        }) ??
-        null
-      const temCadastro =
-        coalesceStr(d.master(m)) != null || coalesceStr(d.cadastro(v)) != null
+      const v = vidaPorCarteirinha.get(cart)
+      const u = utilPorCarteirinha.get(cart)
+      const temCadastro = coalesceStr(d.cadastro(v)) != null
       const temConsolidado = temCadastro || coalesceStr(d.util(u)) != null
       if (temCadastro) cadastro++
       if (temConsolidado) consolidado++
