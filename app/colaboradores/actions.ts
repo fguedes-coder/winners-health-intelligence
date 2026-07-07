@@ -2,6 +2,7 @@
 
 import { createClient } from '@/lib/supabase/server'
 import { revalidatePath } from 'next/cache'
+import { normalizarNome } from '@/lib/people-analytics/rh'
 
 // Telas que exibem o nome do beneficiário resolvido pela carteirinha.
 // Como `beneficiario_nomes` é a fonte ÚNICA de nomes, qualquer inclusão,
@@ -459,9 +460,120 @@ export type MesclarVidasResult = {
   inalterados: number
   ignorados: number
   total: number
+  // Registros do Cadastro Mestre atualizados a partir do mesmo arquivo. O
+  // Cadastro Mestre tem PRECEDÊNCIA na exibição, então sem esta etapa a
+  // correção gravada em beneficiario_vidas ficaria "escondida" atrás do master.
+  masterAtualizados: number
   competencia: string
   colunasDetectadas?: Record<string, string>
   error?: string
+}
+
+// Colunas do Cadastro Mestre atualizáveis a partir de uma linha da base de vidas.
+type MasterMergeRow = {
+  id: string
+  carteirinha: string | null
+  cpf: string | null
+  nome: string | null
+  nome_norm: string | null
+  tipo: string | null
+  sexo: string | null
+  data_nascimento: string | null
+  plano: string | null
+  empresa: string | null
+  data_adesao: string | null
+  status: string | null
+}
+
+// Atualiza (merge não-destrutivo) o Cadastro Mestre a partir das linhas já
+// parseadas da base de vidas. Casa por CPF → carteirinha (normalizada p/ 16
+// dígitos) → nome normalizado único. Não INSERE novos registros no master:
+// quem não existe lá é exibido a partir de beneficiario_vidas (já atualizado),
+// evitando o risco de duplicar a população. Retorna quantos foram atualizados.
+async function mesclarNoMaster(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  linhas: VidaRow[],
+  nowIso: string,
+): Promise<number> {
+  // Carrega o master (paginado) com as colunas mescláveis.
+  const master: MasterMergeRow[] = []
+  const PAGE = 1000
+  let from = 0
+  for (;;) {
+    const { data, error } = await supabase
+      .from('beneficiarios_master')
+      .select(
+        'id, carteirinha, cpf, nome, nome_norm, tipo, sexo, data_nascimento, plano, empresa, data_adesao, status',
+      )
+      .range(from, from + PAGE - 1)
+    if (error || !data || data.length === 0) break
+    master.push(...(data as MasterMergeRow[]))
+    if (data.length < PAGE) break
+    from += PAGE
+  }
+  if (master.length === 0) return 0
+
+  // Índices de matching.
+  const byCpf = new Map<string, MasterMergeRow>()
+  const byCart = new Map<string, MasterMergeRow>()
+  const byNome = new Map<string, MasterMergeRow[]>()
+  for (const m of master) {
+    const cpfKey = (m.cpf ?? '').replace(/\D/g, '')
+    if (cpfKey) byCpf.set(cpfKey, m)
+    const cartKey = normalizarCarteirinha(m.carteirinha ?? undefined)
+    if (cartKey) byCart.set(cartKey, m)
+    if (m.nome_norm) {
+      const arr = byNome.get(m.nome_norm) ?? []
+      arr.push(m)
+      byNome.set(m.nome_norm, arr)
+    }
+  }
+
+  // Campos da base de vidas → colunas do master.
+  const CAMPOS: (keyof Pick<
+    VidaRow,
+    'nome' | 'cpf' | 'tipo' | 'sexo' | 'data_nascimento' | 'plano' | 'empresa' | 'data_adesao' | 'status'
+  >)[] = ['nome', 'cpf', 'tipo', 'sexo', 'data_nascimento', 'plano', 'empresa', 'data_adesao', 'status']
+
+  let atualizados = 0
+  const atualizadosIds = new Set<string>()
+  for (const l of linhas) {
+    const cpfKey = (l.cpf ?? '').replace(/\D/g, '')
+    const nomeNorm = l.nome ? normalizarNome(l.nome) : ''
+    // Cascata: CPF → carteirinha normalizada → nome normalizado (se único).
+    let alvo: MasterMergeRow | undefined
+    if (cpfKey) alvo = byCpf.get(cpfKey)
+    if (!alvo && l.carteirinha) alvo = byCart.get(l.carteirinha)
+    if (!alvo && nomeNorm) {
+      const cand = byNome.get(nomeNorm)
+      if (cand && cand.length === 1) alvo = cand[0]
+    }
+    if (!alvo || atualizadosIds.has(alvo.id)) continue
+
+    // Sobrescreve apenas com valores preenchidos que diferem do atual.
+    const patch: Record<string, string | null> = {}
+    for (const campo of CAMPOS) {
+      const valNovo = l[campo]
+      if (valNovo != null && valNovo !== '' && valNovo !== alvo[campo]) {
+        patch[campo] = valNovo
+      }
+    }
+    if (patch.nome !== undefined) {
+      const nn = normalizarNome(String(patch.nome))
+      if (nn && nn !== alvo.nome_norm) patch.nome_norm = nn
+    }
+    if (Object.keys(patch).length === 0) continue
+
+    const { error } = await supabase
+      .from('beneficiarios_master')
+      .update({ ...patch, updated_at: nowIso })
+      .eq('id', alvo.id)
+    if (!error) {
+      atualizados++
+      atualizadosIds.add(alvo.id)
+    }
+  }
+  return atualizados
 }
 
 export async function mesclarVidas(
@@ -474,6 +586,7 @@ export async function mesclarVidas(
     inalterados: 0,
     ignorados: 0,
     total: 0,
+    masterAtualizados: 0,
     competencia: '',
   }
   try {
@@ -602,6 +715,10 @@ export async function mesclarVidas(
         .upsert(comNome, { onConflict: 'carteirinha' })
     }
 
+    // Também atualiza o Cadastro Mestre (fonte de MAIOR precedência na tela),
+    // para que a correção de CPF/nascimento/etc. realmente apareça.
+    const masterAtualizados = await mesclarNoMaster(supabase, finais, nowIso)
+
     revalidarTelasComNomes()
 
     return {
@@ -611,6 +728,7 @@ export async function mesclarVidas(
       inalterados,
       ignorados: rows.length - finais.length,
       total: finais.length,
+      masterAtualizados,
       competencia,
       colunasDetectadas: mapeamento,
     }

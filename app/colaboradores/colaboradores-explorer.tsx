@@ -229,6 +229,10 @@ export function ColaboradoresExplorer({
           tipo: 'ok',
           texto: `Base ${formatarCompetencia(res.competencia)} atualizada: ${res.atualizados} atualizados, ${res.inseridos} novos, ${res.inalterados} sem mudança${
             res.ignorados > 0 ? `, ${res.ignorados} ignorados` : ''
+          }${
+            res.masterAtualizados > 0
+              ? ` · ${res.masterAtualizados} no Cadastro Mestre`
+              : ''
           }.${cols}`,
         })
         router.refresh()
@@ -618,9 +622,9 @@ export function ColaboradoresExplorer({
                 </Button>
                 <Button
                   type="button"
-                  variant="outline"
+                  variant="secondary"
                   disabled={importando}
-                  className="w-fit"
+                  className="w-fit border border-primary/40"
                   onClick={() => fileMesclarRef.current?.click()}
                   title="Atualiza os dados dos beneficiários na competência ativa e adiciona os novos, sem criar um novo mês nem duplicar."
                 >
