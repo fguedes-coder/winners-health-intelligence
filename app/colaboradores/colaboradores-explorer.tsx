@@ -229,6 +229,10 @@ export function ColaboradoresExplorer({
           tipo: 'ok',
           texto: `Base ${formatarCompetencia(res.competencia)} atualizada: ${res.atualizados} atualizados, ${res.inseridos} novos, ${res.inalterados} sem mudança${
             res.ignorados > 0 ? `, ${res.ignorados} ignorados` : ''
+          }${
+            res.masterAtualizados > 0
+              ? ` · ${res.masterAtualizados} no Cadastro Mestre`
+              : ''
           }.${cols}`,
         })
         router.refresh()
