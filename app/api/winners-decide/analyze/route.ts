@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { generateText } from 'ai'
 import { createOpenAI } from '@ai-sdk/openai'
+import { requireAuthApi } from '@/lib/auth/require-user'
 import { getWinnersDataset } from '@/lib/winners-data-server'
 import {
   montarPayloadIA,
@@ -21,6 +22,9 @@ type Body = {
 }
 
 export async function POST(req: Request) {
+  const auth = await requireAuthApi()
+  if (auth instanceof NextResponse) return auth
+
   let body: Body
   try {
     body = (await req.json()) as Body

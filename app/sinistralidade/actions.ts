@@ -1,6 +1,7 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
+import { requireAuthAction } from '@/lib/auth/require-user'
 import { createClient } from '@/lib/supabase/server'
 
 export type FaturaRegistro = {
@@ -54,6 +55,9 @@ function parse(formData: FormData): FaturaInput {
 
 // Cria ou atualiza o lançamento da competência (fatura + total de vidas).
 export async function upsertFatura(formData: FormData) {
+  const auth = await requireAuthAction()
+  if ('error' in auth) return { error: auth.error }
+
   const d = parse(formData)
   if (!/^\d{4}-\d{2}$/.test(d.competencia)) {
     return { error: 'Informe uma competência válida (mês/ano).' }
@@ -108,6 +112,9 @@ export async function upsertFatura(formData: FormData) {
 }
 
 export async function deleteFatura(id: string) {
+  const auth = await requireAuthAction()
+  if ('error' in auth) return { error: auth.error }
+
   const supabase = await createClient()
   const { error } = await supabase.from('faturas').delete().eq('id', id)
   if (error) return { error: error.message }

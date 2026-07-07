@@ -1,6 +1,7 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
+import { requireAuthAction } from '@/lib/auth/require-user'
 import { createClient } from '@/lib/supabase/server'
 
 export type Apolice = {
@@ -44,6 +45,9 @@ function parseForm(formData: FormData): ApoliceInput {
 }
 
 export async function createApolice(formData: FormData) {
+  const auth = await requireAuthAction()
+  if ('error' in auth) return { error: auth.error }
+
   const data = parseForm(formData)
   if (!data.cliente) {
     return { error: 'O nome do cliente é obrigatório.' }
@@ -71,6 +75,9 @@ export async function createApolice(formData: FormData) {
 }
 
 export async function updateApolice(id: string, formData: FormData) {
+  const auth = await requireAuthAction()
+  if ('error' in auth) return { error: auth.error }
+
   const data = parseForm(formData)
   if (!data.cliente) {
     return { error: 'O nome do cliente é obrigatório.' }
@@ -101,6 +108,9 @@ export async function updateApolice(id: string, formData: FormData) {
 }
 
 export async function deleteApolice(id: string) {
+  const auth = await requireAuthAction()
+  if ('error' in auth) return { error: auth.error }
+
   const supabase = await createClient()
   const { error } = await supabase.from('apolices').delete().eq('id', id)
 

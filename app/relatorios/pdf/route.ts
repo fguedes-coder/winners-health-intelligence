@@ -1,7 +1,9 @@
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import type { NextRequest } from 'next/server'
+import { NextResponse } from 'next/server'
 
+import { requireAuthApi } from '@/lib/auth/require-user'
 import { getDashboardData, getPainel } from '@/lib/queries'
 import { getWinnersDataset } from '@/lib/winners-data-server'
 import { gerarAnaliseExecutiva } from '@/lib/analise-ia'
@@ -64,6 +66,9 @@ function slugify(s: string): string {
 }
 
 export async function GET(request: NextRequest) {
+  const auth = await requireAuthApi()
+  if (auth instanceof NextResponse) return auth
+
   const sp = request.nextUrl.searchParams
 
   const mes = (sp.get('mes') ?? '')

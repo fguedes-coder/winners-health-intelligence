@@ -2,6 +2,7 @@
 
 import { revalidatePath } from 'next/cache'
 import * as XLSX from 'xlsx'
+import { requireAuthAction } from '@/lib/auth/require-user'
 import { createClient } from '@/lib/supabase/server'
 import {
   mapearLinha,
@@ -56,6 +57,9 @@ function escolherLinhas(wb: XLSX.WorkBook): Record<string, unknown>[] {
 }
 
 export async function importarRh(formData: FormData): Promise<ImportarRhResult> {
+  const auth = await requireAuthAction()
+  if ('error' in auth) return { error: auth.error }
+
   const file = formData.get('arquivo') as File | null
   const similaridadeMin = Number(formData.get('similaridade') ?? 0.85)
   if (!file || file.size === 0) return { error: 'Selecione um arquivo XLSX ou CSV.' }

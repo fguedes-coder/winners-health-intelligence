@@ -2,6 +2,7 @@
 
 import { createClient } from '@/lib/supabase/server'
 import { revalidatePath } from 'next/cache'
+import { requireAuthAction } from '@/lib/auth/require-user'
 import { normalizarNome } from '@/lib/people-analytics/rh'
 
 // Telas que exibem o nome do beneficiário resolvido pela carteirinha.
@@ -326,6 +327,20 @@ function parseVidas(conteudo: string): {
 export async function importarVidas(
   formData: FormData,
 ): Promise<ImportVidasResult> {
+  const auth = await requireAuthAction()
+  if ('error' in auth) {
+    return {
+      ok: false,
+      inseridos: 0,
+      atualizados: 0,
+      ignorados: 0,
+      removidos: 0,
+      total: 0,
+      competencia: '',
+      error: auth.error,
+    }
+  }
+
   // Competência (YYYY-MM) à qual esta base de vidas ficará vinculada.
   const competenciaRaw = String(formData.get('competencia') ?? '').trim()
   const competencia = /^\d{4}-\d{2}$/.test(competenciaRaw) ? competenciaRaw : ''
@@ -579,6 +594,21 @@ async function mesclarNoMaster(
 export async function mesclarVidas(
   formData: FormData,
 ): Promise<MesclarVidasResult> {
+  const auth = await requireAuthAction()
+  if ('error' in auth) {
+    return {
+      ok: false,
+      atualizados: 0,
+      inseridos: 0,
+      inalterados: 0,
+      ignorados: 0,
+      total: 0,
+      masterAtualizados: 0,
+      competencia: '',
+      error: auth.error,
+    }
+  }
+
   const vazio: MesclarVidasResult = {
     ok: false,
     atualizados: 0,
@@ -786,6 +816,18 @@ function parseNomes(
 export async function importarNomes(
   formData: FormData,
 ): Promise<ImportNomesResult> {
+  const auth = await requireAuthAction()
+  if ('error' in auth) {
+    return {
+      ok: false,
+      inseridos: 0,
+      atualizados: 0,
+      ignorados: 0,
+      total: 0,
+      error: auth.error,
+    }
+  }
+
   try {
     const file = formData.get('file') as File | null
     if (!file) {
@@ -884,6 +926,9 @@ export async function salvarNome(
   carteirinha: string,
   nome: string,
 ): Promise<{ ok: boolean; error?: string }> {
+  const auth = await requireAuthAction()
+  if ('error' in auth) return { ok: false, error: auth.error }
+
   const cart = carteirinha.trim()
   const n = nome.trim()
   if (!cart) return { ok: false, error: 'Carteirinha inválida.' }
