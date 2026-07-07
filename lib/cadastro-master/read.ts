@@ -166,3 +166,31 @@ export async function loadMasterIndex(
     resolve,
   }
 }
+
+// Retorna os registros do master que NÃO estão representados na população real
+// (base de vidas + eventos), casando por carteirinha, CPF ou nome normalizado.
+// Esses são os únicos que devem virar linhas NOVAS nas telas — os demais apenas
+// enriquecem a linha existente (via resolve). Evita nomes duplicados quando a
+// carteirinha do master difere da usada em vidas/eventos, mas o CPF/nome casa.
+export function masterNaoRepresentados(
+  index: MasterIndex,
+  conhecidos: {
+    carteirinhas?: Set<string>
+    cpfs?: Set<string>
+    nomesNorm?: Set<string>
+  },
+): MasterCadastro[] {
+  const { carteirinhas, cpfs, nomesNorm } = conhecidos
+  const novos: MasterCadastro[] = []
+  for (const m of index.list) {
+    const cart = m.carteirinha
+    const cpfKey = digits(m.cpf)
+    const nn = m.nomeNorm
+    const jaExiste =
+      (cart != null && carteirinhas?.has(cart)) ||
+      (cpfKey != null && cpfs?.has(cpfKey)) ||
+      (nn != null && nomesNorm?.has(nn))
+    if (!jaExiste) novos.push(m)
+  }
+  return novos
+}

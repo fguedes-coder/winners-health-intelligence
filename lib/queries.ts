@@ -9,7 +9,11 @@ import {
 } from '@/lib/categorias'
 import { beneficiarioLabel } from '@/lib/display-prefs'
 import { getBenefDisplay } from '@/lib/display-prefs-server'
-import { loadMasterIndex, type MasterCadastro } from '@/lib/cadastro-master/read'
+import {
+  loadMasterIndex,
+  masterNaoRepresentados,
+  type MasterCadastro,
+} from '@/lib/cadastro-master/read'
 import { normalizarNome } from '@/lib/people-analytics/rh'
 
 type SupabaseServer = Awaited<ReturnType<typeof createClient>>
@@ -1637,27 +1641,39 @@ export async function getColaboradores(
     from += PAGE
   }
 
-  // Universo = Cadastro Mestre ∪ base de vidas elegíveis ∪ carteirinhas que
-  // utilizaram. O Cadastro Mestre é a fonte de MAIOR precedência e amplia a
-  // população: registros exclusivos do mestre também aparecem nas telas.
-  const vidaCpfSet = new Set<string>()
+  // Universo = base de vidas elegíveis ∪ carteirinhas que utilizaram ∪ pessoas
+  // que existem SÓ no Cadastro Mestre. IMPORTANTE: a carteirinha do master pode
+  // diferir da usada em vidas/eventos, mas casar por CPF/nome. Por isso NÃO
+  // adicionamos as carteirinhas do master ao universo — apenas os registros que
+  // não estão representados na população real viram linhas novas (via chave
+  // sintética). Os demais só enriquecem a linha existente (resolve por CPF/nome).
+  const cartConhecidas = new Set<string>([
+    ...vidaPorCarteirinha.keys(),
+    ...mapa.keys(),
+  ])
+  const cpfConhecidos = new Set<string>()
+  const nomesConhecidos = new Set<string>()
   for (const v of vidaPorCarteirinha.values()) {
     const c = (v.cpf ?? '').replace(/\D/g, '')
-    if (c) vidaCpfSet.add(c)
+    if (c) cpfConhecidos.add(c)
+    if (v.nome) nomesConhecidos.add(normalizarNome(v.nome))
   }
-  // Registros do mestre sem carteirinha que NÃO casam por CPF com uma vida
-  // recebem uma chave sintética (aparecem em listagens/qualidade, sem ficha).
+  for (const nome of nomePorCarteirinha.values()) {
+    if (nome) nomesConhecidos.add(normalizarNome(nome))
+  }
+
   const sinteticoPorChave = new Map<string, MasterCadastro>()
-  for (const m of masterIndex.semCarteirinha) {
-    const cpfDig = (m.cpf ?? '').replace(/\D/g, '')
-    if (cpfDig && vidaCpfSet.has(cpfDig)) continue // será resolvido via CPF
+  for (const m of masterNaoRepresentados(masterIndex, {
+    carteirinhas: cartConhecidas,
+    cpfs: cpfConhecidos,
+    nomesNorm: nomesConhecidos,
+  })) {
     sinteticoPorChave.set(`master:${m.id}`, m)
   }
 
   const universo = new Set<string>([
     ...vidaPorCarteirinha.keys(),
     ...mapa.keys(),
-    ...masterIndex.byCarteirinha.keys(),
     ...sinteticoPorChave.keys(),
   ])
 
@@ -1686,8 +1702,11 @@ export async function getColaboradores(
       carteirinha: cart,
       nome: coalesceStr(master?.nome, vida?.nome, nomePorCarteirinha.get(cart)),
       cpf: coalesceStr(master?.cpf, vida?.cpf),
-      plano: coalesceStr(master?.plano, vida?.plano, util?.plano),
-      empresa: coalesceStr(master?.empresa, vida?.empresa, util?.empresa),
+      // Plano/empresa: o master costuma trazer apenas CÓDIGOS numéricos; a
+      // utilização e a base de vidas trazem nomes legíveis. Preferimos o valor
+      // legível e só caímos no master quando não há outra fonte.
+      plano: coalesceStr(util?.plano, vida?.plano, master?.plano),
+      empresa: coalesceStr(util?.empresa, vida?.empresa, master?.empresa),
       subCodigo: util?.subCodigo ?? null,
       tipoBeneficiario: tipoFinal,
       titular: vinculo === 'TITULAR',
@@ -1950,19 +1969,27 @@ export async function getDiagnosticoBase(
   }))
   const temBaseVidas = vidasRaw.length > 0
 
-  // O Cadastro Mestre também compõe a base elegível (amplia a população).
-  // Registros do mestre com carteirinha ainda não presente entram na base.
+  // O Cadastro Mestre também compõe a base elegível (amplia a população), mas
+  // SÓ com pessoas que ainda não estão na base de vidas. Como a carteirinha do
+  // master pode diferir da de vidas embora o CPF/nome casem, deduplicamos por
+  // carteirinha, CPF e nome para não inflar a base com registros repetidos.
   const cartVidas = new Set(vidasRaw.map((v) => v.carteirinha))
-  const vidasMaster: VidaMini[] = []
-  for (const m of masterIndex.list) {
-    const cart = (m.carteirinha ?? '').trim()
-    if (cart && cartVidas.has(cart)) continue
-    vidasMaster.push({
-      carteirinha: cart || `master:${m.id}`,
-      nome: m.nome,
-      cpf: m.cpf,
-    })
+  const cpfVidas = new Set<string>()
+  const nomeVidas = new Set<string>()
+  for (const v of vidasRaw) {
+    const c = (v.cpf ?? '').replace(/\D/g, '')
+    if (c) cpfVidas.add(c)
+    if (v.nome) nomeVidas.add(normalizarNome(v.nome))
   }
+  const vidasMaster: VidaMini[] = masterNaoRepresentados(masterIndex, {
+    carteirinhas: cartVidas,
+    cpfs: cpfVidas,
+    nomesNorm: nomeVidas,
+  }).map((m) => ({
+    carteirinha: (m.carteirinha ?? '').trim() || `master:${m.id}`,
+    nome: m.nome,
+    cpf: m.cpf,
+  }))
   const vidas = [...vidasRaw, ...vidasMaster]
   const vidaPorCarteirinha = new Map<string, VidaMini>(
     vidas.map((v) => [v.carteirinha, v]),
@@ -2365,8 +2392,9 @@ export async function getBeneficiarioPerfil(
       coalesceStr(master?.dataNascimento, vida?.data_nascimento),
     ),
     dataNascimento: coalesceStr(master?.dataNascimento, vida?.data_nascimento),
-    plano: coalesceStr(master?.plano, vida?.plano, planoUtil),
-    empresa: coalesceStr(master?.empresa, vida?.empresa, empresaUtil),
+    // Plano/empresa: prefere o valor legível (utilização/vida) ao código do master.
+    plano: coalesceStr(planoUtil, vida?.plano, master?.plano),
+    empresa: coalesceStr(empresaUtil, vida?.empresa, master?.empresa),
     dataAdesao: coalesceStr(master?.dataAdesao, vida?.data_adesao),
     status:
       coalesceStr(master?.status, vida?.status) ??
@@ -2507,17 +2535,21 @@ export async function getQualidadeCadastral(): Promise<QualidadeCadastral> {
     from += PAGE
   }
 
-  // População de referência: Cadastro Mestre ∪ base de vidas; se nenhum
-  // existir, as carteirinhas observadas na utilização.
-  const vidaCpfSet = new Set<string>()
+  // População de referência: base de vidas ∪ pessoas que existem SÓ no Cadastro
+  // Mestre. A carteirinha do master pode diferir da de vidas/eventos mas casar
+  // por CPF; por isso deduplicamos por carteirinha/CPF (evita contagem dupla)
+  // em vez de adicionar todas as carteirinhas do master ao universo.
+  const cartConhecidas = new Set<string>(vidaPorCarteirinha.keys())
+  const cpfConhecidos = new Set<string>()
   for (const v of vidaPorCarteirinha.values()) {
     const c = (v.cpf ?? '').replace(/\D/g, '')
-    if (c) vidaCpfSet.add(c)
+    if (c) cpfConhecidos.add(c)
   }
   const sinteticoPorChave = new Map<string, MasterCadastro>()
-  for (const m of masterIndex.semCarteirinha) {
-    const cpfDig = (m.cpf ?? '').replace(/\D/g, '')
-    if (cpfDig && vidaCpfSet.has(cpfDig)) continue
+  for (const m of masterNaoRepresentados(masterIndex, {
+    carteirinhas: cartConhecidas,
+    cpfs: cpfConhecidos,
+  })) {
     sinteticoPorChave.set(`master:${m.id}`, m)
   }
   const temBase = temBaseVidas || masterIndex.temMaster
@@ -2525,7 +2557,6 @@ export async function getQualidadeCadastral(): Promise<QualidadeCadastral> {
     ? [
         ...new Set<string>([
           ...vidaPorCarteirinha.keys(),
-          ...masterIndex.byCarteirinha.keys(),
           ...sinteticoPorChave.keys(),
         ]),
       ]
