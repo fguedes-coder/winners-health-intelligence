@@ -14,7 +14,12 @@ import {
   masterNaoRepresentados,
   type MasterCadastro,
 } from '@/lib/cadastro-master/read'
-import { normalizarNome } from '@/lib/people-analytics/rh'
+import {
+  UnificadorIdentidade,
+  normalizarCarteirinha,
+  normalizarCpf,
+  normalizarNome,
+} from '@/lib/beneficiario/identity'
 
 type SupabaseServer = Awaited<ReturnType<typeof createClient>>
 
@@ -1625,18 +1630,25 @@ export async function getColaboradores(
       razao_social: string | null
     }[]).map((s) => [s.id, s]),
   )
-  const nomePorCarteirinha = new Map(
-    ((nomesData ?? []) as { carteirinha: string; nome: string }[]).map((n) => [
-      n.carteirinha.trim(),
-      n.nome,
-    ]),
-  )
-  const vidaPorCarteirinha = new Map<string, VidaCadastro>(
-    ((vidasData ?? []) as VidaCadastro[]).map((v) => [
-      v.carteirinha.trim(),
-      v,
-    ]),
-  )
+  const nomePorCarteirinha = new Map<string, string>()
+  for (const n of (nomesData ?? []) as { carteirinha: string; nome: string }[]) {
+    const norm = normalizarCarteirinha(n.carteirinha.trim())
+    if (norm) nomePorCarteirinha.set(norm, n.nome)
+  }
+
+  const unificador = new UnificadorIdentidade()
+  const vidaPorCarteirinha = new Map<string, VidaCadastro>()
+
+  for (const v of (vidasData ?? []) as VidaCadastro[]) {
+    const raw = v.carteirinha.trim()
+    const norm = normalizarCarteirinha(raw) || raw
+    const vida: VidaCadastro = { ...v, carteirinha: norm }
+    vidaPorCarteirinha.set(norm, vida)
+    unificador.registrar(
+      { carteirinha: raw, cpf: v.cpf, nome: v.nome },
+      { temVida: true, preferCarteirinha: norm },
+    )
+  }
   const temBaseVidas = vidaPorCarteirinha.size > 0
 
   type Acc = {
@@ -1680,8 +1692,9 @@ export async function getColaboradores(
       if (filtros.de && (!dataRef || dataRef < filtros.de)) continue
       if (filtros.ate && (!dataRef || dataRef > filtros.ate)) continue
 
-      const cart = String(e.cod_usuario ?? '').trim()
-      if (!cart) continue
+      const cartRaw = String(e.cod_usuario ?? '').trim()
+      if (!cartRaw) continue
+      const cartNorm = normalizarCarteirinha(cartRaw) || cartRaw
 
       const ap = e.apolice_id ? apoliceById.get(e.apolice_id as string) : null
       const sub = e.subestipulante_id
@@ -1690,7 +1703,14 @@ export async function getColaboradores(
       const empresa = sub?.razao_social ?? ap?.cliente ?? null
       const tipo = (e.tipo_beneficiario as string) ?? null
 
-      const cur = mapa.get(cart)
+      const slotId = unificador.registrar({
+        carteirinha: cartRaw,
+        cpf: vidaPorCarteirinha.get(cartNorm)?.cpf ?? null,
+        nome: vidaPorCarteirinha.get(cartNorm)?.nome ?? null,
+      })
+      const cartAgregado = unificador.getCarteirinhaCanonica(slotId)
+
+      const cur = mapa.get(cartAgregado)
       if (cur) {
         cur.valor += Number(e.valor_pago ?? 0)
         cur.eventos += 1
@@ -1699,8 +1719,8 @@ export async function getColaboradores(
         if (!cur.subCodigo && sub?.codigo) cur.subCodigo = sub.codigo
         if (!cur.tipoBeneficiario && tipo) cur.tipoBeneficiario = tipo
       } else {
-        mapa.set(cart, {
-          carteirinha: cart,
+        mapa.set(cartAgregado, {
+          carteirinha: cartAgregado,
           plano: (e.plano as string) ?? null,
           empresa,
           subCodigo: sub?.codigo ?? null,
@@ -1714,43 +1734,47 @@ export async function getColaboradores(
     from += PAGE
   }
 
-  // Universo = base de vidas elegíveis ∪ carteirinhas que utilizaram ∪ pessoas
-  // que existem SÓ no Cadastro Mestre. IMPORTANTE: a carteirinha do master pode
-  // diferir da usada em vidas/eventos, mas casar por CPF/nome. Por isso NÃO
-  // adicionamos as carteirinhas do master ao universo — apenas os registros que
-  // não estão representados na população real viram linhas novas (via chave
-  // sintética). Os demais só enriquecem a linha existente (resolve por CPF/nome).
-  const cartConhecidas = new Set<string>([
-    ...vidaPorCarteirinha.keys(),
-    ...mapa.keys(),
-  ])
+  // Universo unificado: vidas + utilização + master não representado (1 linha/pessoa).
   const cpfConhecidos = new Set<string>()
   const nomesConhecidos = new Set<string>()
+  const cartsConhecidas = new Set<string>(vidaPorCarteirinha.keys())
   for (const v of vidaPorCarteirinha.values()) {
-    const c = (v.cpf ?? '').replace(/\D/g, '')
+    const c = normalizarCpf(v.cpf)
     if (c) cpfConhecidos.add(c)
     if (v.nome) nomesConhecidos.add(normalizarNome(v.nome))
   }
   for (const nome of nomePorCarteirinha.values()) {
     if (nome) nomesConhecidos.add(normalizarNome(nome))
   }
+  for (const cart of mapa.keys()) {
+    cartsConhecidas.add(cart)
+    unificador.registrar({ carteirinha: cart })
+  }
 
   const sinteticoPorChave = new Map<string, MasterCadastro>()
   for (const m of masterNaoRepresentados(masterIndex, {
-    carteirinhas: cartConhecidas,
+    carteirinhas: cartsConhecidas,
     cpfs: cpfConhecidos,
     nomesNorm: nomesConhecidos,
   })) {
+    unificador.registrar(
+      {
+        cpf: m.cpf,
+        carteirinha: m.carteirinha,
+        matricula: m.matricula,
+        nome: m.nome,
+      },
+      { masterId: m.id },
+    )
     sinteticoPorChave.set(`master:${m.id}`, m)
   }
 
-  const universo = new Set<string>([
-    ...vidaPorCarteirinha.keys(),
-    ...mapa.keys(),
-    ...sinteticoPorChave.keys(),
-  ])
+  const chavesUnificadas = new Set<string>()
+  for (const [slotId] of unificador.todosSlots()) {
+    chavesUnificadas.add(unificador.getCarteirinhaCanonica(slotId))
+  }
 
-  const colaboradores: ColaboradorRow[] = [...universo].map((cart) => {
+  const colaboradores: ColaboradorRow[] = [...chavesUnificadas].map((cart) => {
     const sintetico = sinteticoPorChave.get(cart)
     const util = sintetico ? undefined : mapa.get(cart)
     const vida = sintetico ? undefined : vidaPorCarteirinha.get(cart)
@@ -2052,10 +2076,11 @@ export async function getDiagnosticoBase(
   )
 
   type VidaMini = { carteirinha: string; nome: string | null; cpf: string | null }
-  const vidasRaw = ((vidasData ?? []) as VidaMini[]).map((v) => ({
-    ...v,
-    carteirinha: v.carteirinha.trim(),
-  }))
+  const vidasRaw = ((vidasData ?? []) as VidaMini[]).map((v) => {
+    const raw = v.carteirinha.trim()
+    const norm = normalizarCarteirinha(raw) || raw
+    return { ...v, carteirinha: norm, cpf: normalizarCpf(v.cpf) }
+  })
   const temBaseVidas = vidasRaw.length > 0
 
   // O Cadastro Mestre também compõe a base elegível (amplia a população), mas
@@ -2066,7 +2091,7 @@ export async function getDiagnosticoBase(
   const cpfVidas = new Set<string>()
   const nomeVidas = new Set<string>()
   for (const v of vidasRaw) {
-    const c = (v.cpf ?? '').replace(/\D/g, '')
+    const c = normalizarCpf(v.cpf)
     if (c) cpfVidas.add(c)
     if (v.nome) nomeVidas.add(normalizarNome(v.nome))
   }
@@ -2096,7 +2121,7 @@ export async function getDiagnosticoBase(
       const k = normalizarTexto(v.nome)
       if (k) porNome.set(k, [...(porNome.get(k) ?? []), v])
     }
-    const cpfDigits = (v.cpf ?? '').replace(/\D/g, '')
+    const cpfDigits = normalizarCpf(v.cpf)
     if (cpfDigits) {
       comCpf++
       porCpf.set(cpfDigits, [...(porCpf.get(cpfDigits) ?? []), v])
@@ -2572,10 +2597,11 @@ export async function getQualidadeCadastral(): Promise<QualidadeCadastral> {
     empresa: string | null
     data_adesao: string | null
   }
-  const vidas = ((vidasData ?? []) as VidaQ[]).map((v) => ({
-    ...v,
-    carteirinha: (v.carteirinha ?? '').trim(),
-  }))
+  const vidas = ((vidasData ?? []) as VidaQ[]).map((v) => {
+    const raw = (v.carteirinha ?? '').trim()
+    const norm = normalizarCarteirinha(raw) || raw
+    return { ...v, carteirinha: norm }
+  })
   const vidaPorCarteirinha = new Map(vidas.map((v) => [v.carteirinha, v]))
   const temBaseVidas = vidaPorCarteirinha.size > 0
 
@@ -2598,8 +2624,9 @@ export async function getQualidadeCadastral(): Promise<QualidadeCadastral> {
       .range(from, from + PAGE - 1)
     if (error || !data || data.length === 0) break
     for (const e of data as Record<string, unknown>[]) {
-      const cart = String(e.cod_usuario ?? '').trim()
-      if (!cart) continue
+      const cartRaw = String(e.cod_usuario ?? '').trim()
+      if (!cartRaw) continue
+      const cart = normalizarCarteirinha(cartRaw) || cartRaw
       const cur = utilPorCarteirinha.get(cart) ?? {
         sexo: null,
         plano: null,
@@ -2631,7 +2658,7 @@ export async function getQualidadeCadastral(): Promise<QualidadeCadastral> {
   const cartConhecidas = new Set<string>(vidaPorCarteirinha.keys())
   const cpfConhecidos = new Set<string>()
   for (const v of vidaPorCarteirinha.values()) {
-    const c = (v.cpf ?? '').replace(/\D/g, '')
+    const c = normalizarCpf(v.cpf)
     if (c) cpfConhecidos.add(c)
   }
   const sinteticoPorChave = new Map<string, MasterCadastro>()

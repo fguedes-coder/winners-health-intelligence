@@ -12,6 +12,13 @@ import 'server-only'
 import * as XLSX from 'xlsx'
 import { createClient } from '@/lib/supabase/server'
 import {
+  chaveIdentidadeArquivo,
+  normalizarCarteirinha,
+  normalizarCpf,
+  normalizarIdentidade,
+  type IdentidadeNormalizada,
+} from '@/lib/beneficiario/identity'
+import {
   mapearLinhaMaster,
   normalizarLinhaMaster,
   CAMPOS_QUALIDADE,
@@ -211,7 +218,10 @@ export async function importarCadastroMaster(
         .range(from, from + PAGE - 1)
       if (error || !data || data.length === 0) break
       for (const e of data as { cod_usuario: string | null }[]) {
-        if (!vazio(e.cod_usuario)) eventosCart.add(String(e.cod_usuario).trim())
+        if (!vazio(e.cod_usuario)) {
+          const n = normalizarCarteirinha(String(e.cod_usuario).trim())
+          if (n) eventosCart.add(n)
+        }
       }
       if (data.length < PAGE) break
       from += PAGE
@@ -221,70 +231,108 @@ export async function importarCadastroMaster(
   const master = (masterData ?? []) as MasterRow[]
   const qualidadeAntes = medirQualidade(master)
 
-  // Índices para matching em cascata.
+  // Índices para matching em cascata (chaves normalizadas).
   const byCpf = new Map<string, MasterRow>()
   const byCarteirinha = new Map<string, MasterRow>()
   const byMatricula = new Map<string, MasterRow>()
   const byNome = new Map<string, MasterRow[]>()
-  for (const r of master) {
-    if (!vazio(r.cpf)) byCpf.set(r.cpf as string, r)
-    if (!vazio(r.carteirinha)) byCarteirinha.set(r.carteirinha as string, r)
-    if (!vazio(r.matricula)) byMatricula.set(r.matricula as string, r)
-    if (!vazio(r.nome_norm)) {
-      const arr = byNome.get(r.nome_norm as string) ?? []
+
+  const indexarMaster = (r: MasterRow) => {
+    const id = identidadeDeRow(r)
+    if (id.cpf) byCpf.set(id.cpf, r)
+    if (id.carteirinha) byCarteirinha.set(id.carteirinha, r)
+    if (id.matricula) byMatricula.set(id.matricula, r)
+    if (id.nomeNorm) {
+      const arr = byNome.get(id.nomeNorm) ?? []
       arr.push(r)
-      byNome.set(r.nome_norm as string, arr)
+      byNome.set(id.nomeNorm, arr)
     }
   }
 
-  // Identidades já conhecidas no sistema (para sinalizar "não encontrados").
+  for (const r of master) indexarMaster(r)
+
+  function identidadeDeRow(r: Pick<MasterRow, 'cpf' | 'carteirinha' | 'matricula' | 'nome_norm'>): IdentidadeNormalizada {
+    return normalizarIdentidade({
+      cpf: r.cpf,
+      carteirinha: r.carteirinha,
+      matricula: r.matricula,
+      nomeNorm: r.nome_norm,
+    })
+  }
+
+  function identidadeDeLinha(l: MasterLinha): IdentidadeNormalizada {
+    return normalizarIdentidade({
+      cpf: l.cpf,
+      carteirinha: l.carteirinha,
+      matricula: l.matricula,
+      nomeNorm: l.nomeNorm,
+    })
+  }
+
+  function resolverMaster(l: MasterLinha): MasterRow | undefined {
+    const id = identidadeDeLinha(l)
+    if (id.cpf) {
+      const hit = byCpf.get(id.cpf)
+      if (hit) return hit
+    }
+    if (id.carteirinha) {
+      const hit = byCarteirinha.get(id.carteirinha)
+      if (hit) return hit
+    }
+    if (id.matricula) {
+      const hit = byMatricula.get(id.matricula)
+      if (hit) return hit
+    }
+    if (id.nomeNorm) {
+      const cand = byNome.get(id.nomeNorm)
+      if (cand && cand.length === 1) return cand[0]
+    }
+    return undefined
+  }
+
+  // Identidades já conhecidas fora do master (vidas + eventos) — bloqueiam insert.
   const conhecidasCart = new Set<string>()
   const conhecidasCpf = new Set<string>()
   for (const v of (vidasData ?? []) as { carteirinha: string | null; cpf: string | null }[]) {
-    if (!vazio(v.carteirinha)) conhecidasCart.add(String(v.carteirinha).trim())
-    if (!vazio(v.cpf)) conhecidasCpf.add(String(v.cpf).replace(/\D/g, ''))
+    if (!vazio(v.carteirinha)) {
+      const n = normalizarCarteirinha(String(v.carteirinha).trim())
+      if (n) conhecidasCart.add(n)
+    }
+    const cpf = normalizarCpf(v.cpf)
+    if (cpf) conhecidasCpf.add(cpf)
   }
-  for (const c of eventosCart) conhecidasCart.add(c)
+  for (const c of eventosCart) {
+    const n = normalizarCarteirinha(c)
+    if (n) conhecidasCart.add(n)
+  }
 
-  // 3) Processa cada linha: match em cascata, merge ou insert.
+  const identidadeConhecidaForaMaster = (id: IdentidadeNormalizada): boolean =>
+    (id.cpf != null && conhecidasCpf.has(id.cpf)) ||
+    (id.carteirinha != null && conhecidasCart.has(id.carteirinha))
+
+  // 3) Processa cada linha: match em cascata, merge ou insert (sem delete).
   let atualizados = 0
   let novos = 0
   let naoEncontrados = 0
   let duplicidades = 0
+  let ignoradosIdentidadeExistente = 0
 
-  const vistos = new Set<string>() // identidades já processadas neste arquivo
+  const vistosArquivo = new Set<string>()
   const paraInserir: ReturnType<typeof paraColunas>[] = []
   const paraAtualizar: { id: string; patch: Record<string, string | null> }[] = []
 
-  const chaveIdentidade = (l: MasterLinha) =>
-    l.cpf
-      ? `cpf:${l.cpf}`
-      : l.carteirinha
-        ? `cart:${l.carteirinha}`
-        : l.matricula
-          ? `mat:${l.matricula}`
-          : `nome:${l.nomeNorm}`
-
   for (const l of linhas) {
-    const idk = chaveIdentidade(l)
-    if (vistos.has(idk)) {
+    const idLinha = identidadeDeLinha(l)
+    const idk = chaveIdentidadeArquivo(idLinha)
+    if (idk && vistosArquivo.has(idk)) {
       duplicidades++
       continue
     }
-    vistos.add(idk)
+    if (idk) vistosArquivo.add(idk)
 
-    // Cascata: CPF -> Carteirinha -> Matrícula -> Nome normalizado idêntico.
-    let alvo: MasterRow | undefined
-    if (l.cpf) alvo = byCpf.get(l.cpf)
-    if (!alvo && l.carteirinha) alvo = byCarteirinha.get(l.carteirinha)
-    if (!alvo && l.matricula) alvo = byMatricula.get(l.matricula)
-    if (!alvo && l.nomeNorm) {
-      const cand = byNome.get(l.nomeNorm)
-      if (cand && cand.length === 1) alvo = cand[0] // só casa se único
-    }
+    const alvo = resolverMaster(l)
 
     if (alvo) {
-      // Merge não-destrutivo: só preenche campos vazios/atualiza com novo valor.
       const nova = paraColunas(l)
       const patch: Record<string, string | null> = {}
       for (const [col, valor] of Object.entries(nova)) {
@@ -294,16 +342,18 @@ export async function importarCadastroMaster(
         paraAtualizar.push({ id: alvo.id, patch })
       }
       atualizados++
-    } else {
-      paraInserir.push(paraColunas(l))
-      novos++
-      const cartKey = l.carteirinha ? l.carteirinha.trim() : ''
-      const cpfDig = l.cpf ? l.cpf.replace(/\D/g, '') : ''
-      const conhecido =
-        (cartKey && conhecidasCart.has(cartKey)) ||
-        (cpfDig && conhecidasCpf.has(cpfDig))
-      if (!conhecido) naoEncontrados++
+      continue
     }
+
+    // CPF/carteirinha já existem em vidas/eventos — não cria novo no master.
+    if (identidadeConhecidaForaMaster(idLinha)) {
+      ignoradosIdentidadeExistente++
+      continue
+    }
+
+    paraInserir.push(paraColunas(l))
+    novos++
+    naoEncontrados++
   }
 
   // 4) Persiste a importação (para vincular origem nos registros).
@@ -325,14 +375,20 @@ export async function importarCadastroMaster(
     return { error: `Erro ao registrar importação: ${impErr?.message ?? 'desconhecido'}` }
   }
 
-  // 5) Executa inserts (em lote) e updates (individuais).
+  // 5) Executa inserts (somente identidades novas) e updates — sem delete.
   const CHUNK = 500
   for (let i = 0; i < paraInserir.length; i += CHUNK) {
     const lote = paraInserir
       .slice(i, i + CHUNK)
       .map((r) => ({ ...r, origem_importacao_id: imp.id }))
-    const { error } = await supabase.from('beneficiarios_master').insert(lote)
+    const { data: inserted, error } = await supabase
+      .from('beneficiarios_master')
+      .insert(lote)
+      .select('id, carteirinha, matricula, cpf, nome_norm')
     if (error) return { error: `Erro ao inserir novos: ${error.message}` }
+    for (const row of (inserted ?? []) as MasterRow[]) {
+      indexarMaster(row)
+    }
   }
   for (const u of paraAtualizar) {
     const { error } = await supabase
