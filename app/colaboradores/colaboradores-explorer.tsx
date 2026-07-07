@@ -618,9 +618,9 @@ export function ColaboradoresExplorer({
                 </Button>
                 <Button
                   type="button"
-                  variant="outline"
+                  variant="secondary"
                   disabled={importando}
-                  className="w-fit"
+                  className="w-fit border border-primary/40"
                   onClick={() => fileMesclarRef.current?.click()}
                   title="Atualiza os dados dos beneficiários na competência ativa e adiciona os novos, sem criar um novo mês nem duplicar."
                 >
