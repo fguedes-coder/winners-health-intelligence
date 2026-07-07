@@ -1,6 +1,7 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
+import { requireAuthAction } from '@/lib/auth/require-user'
 import {
   importarCadastroMaster,
   type ImportarMasterResult,
@@ -9,6 +10,9 @@ import {
 export async function importarMaster(
   formData: FormData,
 ): Promise<ImportarMasterResult> {
+  const auth = await requireAuthAction()
+  if ('error' in auth) return { error: auth.error }
+
   const file = formData.get('arquivo')
   if (!(file instanceof File)) {
     return { error: 'Selecione um arquivo CSV ou XLSX.' }

@@ -2,6 +2,7 @@
 
 import { put, del } from '@vercel/blob'
 import { revalidatePath } from 'next/cache'
+import { requireAuthAction } from '@/lib/auth/require-user'
 import { createClient } from '@/lib/supabase/server'
 
 export type RelatorioConfig = {
@@ -25,6 +26,9 @@ export async function getRelatorioConfig(): Promise<RelatorioConfig> {
 export async function salvarNomeCliente(
   nome: string,
 ): Promise<{ ok: boolean; error?: string }> {
+  const auth = await requireAuthAction()
+  if ('error' in auth) return { ok: false, error: auth.error }
+
   const supabase = await createClient()
   const { error } = await supabase
     .from('relatorio_config')
@@ -38,6 +42,9 @@ export async function salvarNomeCliente(
 export async function uploadLogoCliente(
   formData: FormData,
 ): Promise<{ ok: boolean; url?: string; error?: string }> {
+  const auth = await requireAuthAction()
+  if ('error' in auth) return { ok: false, error: auth.error }
+
   const file = formData.get('logo')
   if (!(file instanceof File) || file.size === 0) {
     return { ok: false, error: 'Selecione um arquivo de imagem.' }
@@ -81,6 +88,9 @@ export async function uploadLogoCliente(
 }
 
 export async function removerLogoCliente(): Promise<{ ok: boolean; error?: string }> {
+  const auth = await requireAuthAction()
+  if ('error' in auth) return { ok: false, error: auth.error }
+
   const supabase = await createClient()
   const { data: atual } = await supabase
     .from('relatorio_config')

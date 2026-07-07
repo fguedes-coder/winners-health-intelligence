@@ -1,16 +1,15 @@
 import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
 
-// Rotas internas que exigem autenticação.
-const PROTECTED_PREFIXES = [
-  '/dashboard',
-  '/clientes',
-  '/apolices',
-  '/sinistralidade',
-  '/uploads',
-  '/relatorios',
-  '/configuracoes',
-]
+/**
+ * Rotas explicitamente públicas. Todo o restante exige autenticação
+ * (deny-by-default), incluindo páginas sensíveis e APIs internas.
+ */
+const PUBLIC_PATHS = new Set(['/'])
+
+function isPublicPath(pathname: string): boolean {
+  return PUBLIC_PATHS.has(pathname)
+}
 
 export async function updateSession(request: NextRequest) {
   let supabaseResponse = NextResponse.next({
@@ -53,12 +52,16 @@ export async function updateSession(request: NextRequest) {
   } = await supabase.auth.getUser()
 
   const { pathname } = request.nextUrl
-  const isProtected = PROTECTED_PREFIXES.some(
-    (prefix) => pathname === prefix || pathname.startsWith(prefix + '/'),
-  )
+  const requiresAuth = !isPublicPath(pathname)
 
-  // Usuário não autenticado tentando acessar rota interna -> redireciona ao login.
-  if (isProtected && !user) {
+  // Usuário não autenticado em rota protegida.
+  if (requiresAuth && !user) {
+    if (pathname.startsWith('/api/')) {
+      return NextResponse.json(
+        { error: 'Não autenticado.' },
+        { status: 401 },
+      )
+    }
     const url = request.nextUrl.clone()
     url.pathname = '/'
     return NextResponse.redirect(url)

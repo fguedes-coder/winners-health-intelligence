@@ -1,6 +1,7 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
+import { requireAuthAction } from '@/lib/auth/require-user'
 import { createClient } from '@/lib/supabase/server'
 
 export type Cliente = {
@@ -34,6 +35,9 @@ function parseForm(formData: FormData): ClienteInput {
 }
 
 export async function createCliente(formData: FormData): Promise<ActionResult> {
+  const auth = await requireAuthAction()
+  if ('error' in auth) return { error: auth.error }
+
   const data = parseForm(formData)
   if (!data.nome) return { error: 'O nome é obrigatório.' }
 
@@ -55,6 +59,9 @@ export async function updateCliente(
   id: string,
   formData: FormData,
 ): Promise<ActionResult> {
+  const auth = await requireAuthAction()
+  if ('error' in auth) return { error: auth.error }
+
   const data = parseForm(formData)
   if (!data.nome) return { error: 'O nome é obrigatório.' }
 
@@ -76,6 +83,9 @@ export async function updateCliente(
 }
 
 export async function deleteCliente(id: string): Promise<ActionResult> {
+  const auth = await requireAuthAction()
+  if ('error' in auth) return { error: auth.error }
+
   const supabase = await createClient()
   const { error } = await supabase.from('clientes').delete().eq('id', id)
 

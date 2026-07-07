@@ -1,6 +1,7 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
+import { requireAuthAction } from '@/lib/auth/require-user'
 import { createClient } from '@/lib/supabase/server'
 import {
   parseSulAmerica,
@@ -86,6 +87,9 @@ type ActionResult = { error?: string }
 export async function processarUpload(
   formData: FormData,
 ): Promise<PreviewResult> {
+  const auth = await requireAuthAction()
+  if ('error' in auth) return { error: auth.error }
+
   const clienteId = String(formData.get('cliente_id') ?? '').trim()
   const clienteNome = String(formData.get('cliente_nome') ?? '').trim()
   const file = formData.get('arquivo')
@@ -200,6 +204,9 @@ export async function confirmarImportacao(
   competencia: string,
   opts?: { substituir?: boolean },
 ): Promise<ConfirmResult> {
+  const auth = await requireAuthAction()
+  if ('error' in auth) return { error: auth.error }
+
   const competenciaNorm = (competencia ?? '').trim()
   if (!/^\d{4}-\d{2}$/.test(competenciaNorm)) {
     return { error: 'Selecione a competência (mês/ano) antes de confirmar.' }
@@ -419,6 +426,9 @@ export async function cancelarImportacao(
   id: string,
   path: string,
 ): Promise<ActionResult> {
+  const auth = await requireAuthAction()
+  if ('error' in auth) return { error: auth.error }
+
   const supabase = await createClient()
   if (path) await supabase.storage.from(BUCKET).remove([path])
   const { error } = await supabase.from('importacoes').delete().eq('id', id)
