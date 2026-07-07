@@ -3,6 +3,7 @@
 import { createClient } from '@/lib/supabase/server'
 import { revalidatePath } from 'next/cache'
 import { requireAuthAction } from '@/lib/auth/require-user'
+import { normalizarCarteirinha, normalizarCpf } from '@/lib/beneficiario/identity'
 import { normalizarNome } from '@/lib/people-analytics/rh'
 
 // Telas que exibem o nome do beneficiário resolvido pela carteirinha.
@@ -177,18 +178,6 @@ function parseData(v: string | undefined): string | null {
   return null
 }
 
-// Normaliza a carteirinha para o mesmo formato de eventos_utilizacao.cod_usuario.
-// O cartão ANS tem 20 dígitos = 3 (registro da operadora) + 16 (identificador) +
-// 1 (dígito verificador). O cod_usuario corresponde aos 16 dígitos do meio.
-function normalizarCarteirinha(v: string | undefined): string {
-  if (!v) return ''
-  const d = v.replace(/\D/g, '')
-  if (d.length === 20) return d.slice(3, 19)
-  if (d.length === 19) return d.slice(3) // 3 + 16, sem DV
-  if (d.length === 17) return d.slice(0, 16) // 16 + DV
-  return d
-}
-
 function normalizarTipo(v: string | undefined): string | null {
   if (!v) return null
   const bruto = v.trim()
@@ -310,7 +299,7 @@ function parseVidas(conteudo: string): {
     rows.push({
       carteirinha,
       nome: pick('nome')?.trim() || null,
-      cpf: pick('cpf')?.replace(/\D/g, '') || null,
+      cpf: normalizarCpf(pick('cpf')),
       tipo: normalizarTipo(pick('tipo')),
       sexo: normalizarSexo(pick('sexo')),
       data_nascimento: parseData(pick('data_nascimento')),
@@ -533,7 +522,7 @@ async function mesclarNoMaster(
   const byCart = new Map<string, MasterMergeRow>()
   const byNome = new Map<string, MasterMergeRow[]>()
   for (const m of master) {
-    const cpfKey = (m.cpf ?? '').replace(/\D/g, '')
+    const cpfKey = normalizarCpf(m.cpf)
     if (cpfKey) byCpf.set(cpfKey, m)
     const cartKey = normalizarCarteirinha(m.carteirinha ?? undefined)
     if (cartKey) byCart.set(cartKey, m)
@@ -553,7 +542,7 @@ async function mesclarNoMaster(
   let atualizados = 0
   const atualizadosIds = new Set<string>()
   for (const l of linhas) {
-    const cpfKey = (l.cpf ?? '').replace(/\D/g, '')
+    const cpfKey = normalizarCpf(l.cpf) ?? ''
     const nomeNorm = l.nome ? normalizarNome(l.nome) : ''
     // Cascata: CPF → carteirinha normalizada → nome normalizado (se único).
     let alvo: MasterMergeRow | undefined

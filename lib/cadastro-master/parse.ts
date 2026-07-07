@@ -6,7 +6,12 @@
 // Reaproveita normalizarNome do módulo de People Analytics.
 // ===========================================================================
 
-import { normalizarNome } from '@/lib/people-analytics/rh'
+import {
+  normalizarCpf,
+  normalizarCarteirinha,
+  normalizarMatricula,
+  normalizarNome,
+} from '@/lib/beneficiario/identity'
 
 export type MasterLinha = {
   carteirinha: string | null
@@ -147,29 +152,20 @@ function texto(v: unknown): string | null {
   return s ? s : null
 }
 
-// Mantém apenas dígitos (para CPF/carteirinha/matrícula), preservando null.
-function soDigitos(v: unknown): string | null {
-  const s = texto(v)
-  if (s == null) return null
-  const d = s.replace(/\D/g, '')
-  return d ? d : null
-}
-
-// Normaliza uma linha bruta em MasterLinha. Retorna null quando não há
+// Normaliza uma linha bruta em MasterLinha.
 // nenhuma chave de identificação nem nome (linha vazia/inaproveitável).
 export function normalizarLinhaMaster(bruta: MasterLinhaBruta): MasterLinha | null {
-  // Carteirinha/matrícula mantidas como texto trimado (para casar com o padrão
-  // do restante do sistema, que compara por string). CPF fica só com dígitos.
-  const carteirinha = texto(bruta.carteirinha)
-  const matricula = texto(bruta.matricula)
-  const cpf = soDigitos(bruta.cpf)
+  const cartRaw = texto(bruta.carteirinha)
+  const carteirinha = cartRaw ? normalizarCarteirinha(cartRaw) || cartRaw : null
+  const matricula = normalizarMatricula(texto(bruta.matricula))
+  const cpf = normalizarCpf(texto(bruta.cpf))
   const nome = texto(bruta.nome)
 
   // Sem qualquer identificador útil, a linha não serve para matching/insert.
   if (!carteirinha && !matricula && !cpf && !nome) return null
 
   return {
-    carteirinha,
+    carteirinha: carteirinha || null,
     matricula,
     cpf,
     nome,

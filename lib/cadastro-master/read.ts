@@ -8,6 +8,12 @@
 
 import 'server-only'
 import { createClient } from '@/lib/supabase/server'
+import {
+  normalizarCpf,
+  normalizarCarteirinha,
+  normalizarMatricula,
+  type IdentidadeNormalizada,
+} from '@/lib/beneficiario/identity'
 
 type SupabaseServer = Awaited<ReturnType<typeof createClient>>
 
@@ -35,27 +41,32 @@ export type MasterIndex = {
   temMaster: boolean
   byCarteirinha: Map<string, MasterCadastro>
   byCpf: Map<string, MasterCadastro>
+  byMatricula: Map<string, MasterCadastro>
   byNomeNorm: Map<string, MasterCadastro[]>
-  // Registros do master SEM carteirinha (candidatos a ampliar a base via
-  // chave sintética quando não casarem por CPF/nome com uma vida existente).
   semCarteirinha: MasterCadastro[]
-  // Resolve o cadastro mestre aplicável, em cascata carteirinha -> cpf -> nome.
+  // Resolve o cadastro mestre: CPF → carteirinha → matrícula → nome.
   resolve: (args: {
     carteirinha?: string | null
     cpf?: string | null
+    matricula?: string | null
     nomeNorm?: string | null
   }) => MasterCadastro | undefined
+  identidadeDe: (m: MasterCadastro) => IdentidadeNormalizada
+}
+
+function identidadeDe(m: MasterCadastro): IdentidadeNormalizada {
+  return {
+    cpf: normalizarCpf(m.cpf),
+    carteirinha: m.carteirinha ? normalizarCarteirinha(m.carteirinha) : null,
+    matricula: normalizarMatricula(m.matricula),
+    nomeNorm: m.nomeNorm,
+  }
 }
 
 function norm(v: string | null): string | null {
   if (v == null) return null
   const s = v.trim()
   return s ? s : null
-}
-function digits(v: string | null): string | null {
-  if (v == null) return null
-  const d = v.replace(/\D/g, '')
-  return d ? d : null
 }
 
 type MasterRowDB = {
@@ -122,14 +133,18 @@ export async function loadMasterIndex(
 
   const byCarteirinha = new Map<string, MasterCadastro>()
   const byCpf = new Map<string, MasterCadastro>()
+  const byMatricula = new Map<string, MasterCadastro>()
   const byNomeNorm = new Map<string, MasterCadastro[]>()
   const semCarteirinha: MasterCadastro[] = []
 
   for (const m of list) {
-    if (m.carteirinha) byCarteirinha.set(m.carteirinha, m)
+    const id = identidadeDe(m)
+    if (id.carteirinha) byCarteirinha.set(id.carteirinha, m)
     else semCarteirinha.push(m)
-    const cpfKey = digits(m.cpf)
-    if (cpfKey && !byCpf.has(cpfKey)) byCpf.set(cpfKey, m)
+    if (id.cpf && !byCpf.has(id.cpf)) byCpf.set(id.cpf, m)
+    if (id.matricula && !byMatricula.has(id.matricula)) {
+      byMatricula.set(id.matricula, m)
+    }
     if (m.nomeNorm) {
       const arr = byNomeNorm.get(m.nomeNorm) ?? []
       arr.push(m)
@@ -137,21 +152,31 @@ export async function loadMasterIndex(
     }
   }
 
-  const resolve: MasterIndex['resolve'] = ({ carteirinha, cpf, nomeNorm }) => {
-    const cart = norm(carteirinha ?? null)
-    if (cart) {
-      const hit = byCarteirinha.get(cart)
+  const resolve: MasterIndex['resolve'] = ({
+    carteirinha,
+    cpf,
+    matricula,
+    nomeNorm,
+  }) => {
+    const cartNorm = carteirinha ? normalizarCarteirinha(carteirinha) : null
+    if (cartNorm) {
+      const hit = byCarteirinha.get(cartNorm)
       if (hit) return hit
     }
-    const cpfKey = digits(cpf ?? null)
+    const cpfKey = normalizarCpf(cpf)
     if (cpfKey) {
       const hit = byCpf.get(cpfKey)
+      if (hit) return hit
+    }
+    const matKey = normalizarMatricula(matricula)
+    if (matKey) {
+      const hit = byMatricula.get(matKey)
       if (hit) return hit
     }
     const nn = norm(nomeNorm ?? null)
     if (nn) {
       const cand = byNomeNorm.get(nn)
-      if (cand && cand.length === 1) return cand[0] // só casa quando único
+      if (cand && cand.length === 1) return cand[0]
     }
     return undefined
   }
@@ -161,12 +186,13 @@ export async function loadMasterIndex(
     temMaster: list.length > 0,
     byCarteirinha,
     byCpf,
+    byMatricula,
     byNomeNorm,
     semCarteirinha,
     resolve,
+    identidadeDe,
   }
 }
-
 // Retorna os registros do master que NÃO estão representados na população real
 // (base de vidas + eventos), casando por carteirinha, CPF ou nome normalizado.
 // Esses são os únicos que devem virar linhas NOVAS nas telas — os demais apenas
@@ -183,14 +209,13 @@ export function masterNaoRepresentados(
   const { carteirinhas, cpfs, nomesNorm } = conhecidos
   const novos: MasterCadastro[] = []
   for (const m of index.list) {
-    const cart = m.carteirinha
-    const cpfKey = digits(m.cpf)
-    const nn = m.nomeNorm
+    const id = index.identidadeDe(m)
     const jaExiste =
-      (cart != null && carteirinhas?.has(cart)) ||
-      (cpfKey != null && cpfs?.has(cpfKey)) ||
-      (nn != null && nomesNorm?.has(nn))
+      (id.carteirinha != null && carteirinhas?.has(id.carteirinha)) ||
+      (id.cpf != null && cpfs?.has(id.cpf)) ||
+      (id.matricula != null &&
+        index.byMatricula.has(id.matricula)) ||
+      (id.nomeNorm != null && nomesNorm?.has(id.nomeNorm))
     if (!jaExiste) novos.push(m)
-  }
-  return novos
+  }  return novos
 }
