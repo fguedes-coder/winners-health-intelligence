@@ -1,6 +1,7 @@
 import { DashboardShell } from '@/components/dashboard-shell'
 import { createClient } from '@/lib/supabase/server'
 import { normalizarNome } from '@/lib/people-analytics/rh'
+import { variantesCarteirinha } from '@/lib/cadastro-master/preview'
 
 export const metadata = {
   title: 'Diagnóstico de Duplicidades | Winners Health Intelligence',
@@ -75,6 +76,31 @@ export default async function DiagnosticoDuplicidadesPage() {
     }
   }
 
+  // Verifica TODOS os registros do master (não só os duplicados por nome):
+  // quantos têm carteirinha no formato bruto do MECSAS (candidatos a estarem
+  // "desalinhados" da população real em beneficiario_vidas/eventos), e para
+  // esses, se a versão reduzida (mesma lógica usada no matching real) bate
+  // com um registro existente em beneficiario_vidas.
+  const analiseCarteirinhas = todos.map((r) => {
+    const cart = typeof r.carteirinha === 'string' ? r.carteirinha : ''
+    const bruta = pareceCarteirinhaMecsasBruta(cart)
+    if (!bruta) return { registro: r, bruta: false as const }
+    const variantes = variantesCarteirinha(cart)
+    const reduzidaComMatch = variantes.find((v) => vidasPorCarteirinha.has(v))
+    return {
+      registro: r,
+      bruta: true as const,
+      reduzidaSugerida: reduzidaComMatch ?? variantes[variantes.length - 1] ?? null,
+      temCorrespondencia: Boolean(reduzidaComMatch),
+    }
+  })
+  const comCarteirinhaBruta = analiseCarteirinhas.filter((a) => a.bruta) as Extract<
+    (typeof analiseCarteirinhas)[number],
+    { bruta: true }
+  >[]
+  const comCorrespondencia = comCarteirinhaBruta.filter((a) => a.temCorrespondencia)
+  const semCorrespondencia = comCarteirinhaBruta.filter((a) => !a.temCorrespondencia)
+
   const porNome = new Map<string, LinhaMaster[]>()
   for (const r of todos) {
     const nome = typeof r.nome === 'string' ? r.nome : ''
@@ -135,6 +161,65 @@ export default async function DiagnosticoDuplicidadesPage() {
             Total em <code>beneficiarios_master</code>: <strong>{todos.length}</strong>. Nomes
             normalizados com mais de um registro: <strong>{duplicados.length}</strong>.
           </p>
+        </div>
+
+        <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-4">
+          <h2 className="mb-2 text-base font-semibold text-foreground">
+            Achado principal: carteirinha em formato errado, não duplicidade interna
+          </h2>
+          <p className="mb-3 text-sm text-muted-foreground">
+            De <strong>{todos.length}</strong> registros em <code>beneficiarios_master</code>,{' '}
+            <strong>{comCarteirinhaBruta.length}</strong> têm a carteirinha no formato bruto do
+            MECSAS (prefixo &quot;567&quot; + dígito verificador) em vez do formato reduzido usado
+            em <code>beneficiario_vidas</code>/<code>eventos_utilizacao</code>. Isso faz cada um
+            desses registros aparecer como uma pessoa diferente do beneficiário real na tela
+            Beneficiários (é o caso da Amanda).
+          </p>
+          <p className="mb-3 text-sm">
+            Destes, <strong className="text-success">{comCorrespondencia.length}</strong> têm uma
+            carteirinha reduzida que bate exatamente com um registro em{' '}
+            <code>beneficiario_vidas</code> (candidatos seguros a corrigir só a carteirinha, sem
+            perder o CPF/data de nascimento já preenchidos) e{' '}
+            <strong className="text-warning">{semCorrespondencia.length}</strong> não têm
+            correspondência encontrada (precisam de revisão manual antes de qualquer correção).
+          </p>
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="text-left text-muted-foreground">
+                  <th className="p-1">id</th>
+                  <th className="p-1">nome</th>
+                  <th className="p-1">carteirinha atual (bruta)</th>
+                  <th className="p-1">carteirinha reduzida sugerida</th>
+                  <th className="p-1">bate com beneficiario_vidas?</th>
+                </tr>
+              </thead>
+              <tbody>
+                {comCarteirinhaBruta.map((a) => (
+                  <tr key={a.registro.id} className="border-t border-border/40">
+                    <td className="p-1 font-mono">{a.registro.id}</td>
+                    <td className="p-1">{String(a.registro.nome ?? '—')}</td>
+                    <td className="p-1">{String(a.registro.carteirinha)}</td>
+                    <td className="p-1">{a.reduzidaSugerida ?? '—'}</td>
+                    <td className="p-1">
+                      {a.temCorrespondencia ? (
+                        <span className="text-success">sim</span>
+                      ) : (
+                        <span className="text-warning">não</span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+                {comCarteirinhaBruta.length === 0 && (
+                  <tr>
+                    <td colSpan={5} className="p-1 text-muted-foreground">
+                      Nenhum registro com carteirinha no formato bruto do MECSAS.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
         </div>
 
         <div className="rounded-lg border border-border p-4">

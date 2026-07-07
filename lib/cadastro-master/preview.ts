@@ -148,7 +148,7 @@ export function calcularIdade(dataNascimentoIso: string): number | null {
 const PREFIXO_CARTEIRINHA_MECSAS = '567'
 const TAMANHO_BASE_CARTEIRINHA = 16
 
-function variantesCarteirinha(carteirinha: string): string[] {
+export function variantesCarteirinha(carteirinha: string): string[] {
   const variantes: string[] = []
 
   const semPrefixo = carteirinha.startsWith(PREFIXO_CARTEIRINHA_MECSAS)
