@@ -441,6 +441,187 @@ export async function importarVidas(
   }
 }
 
+// ============================================================
+// ATUALIZAÇÃO (MERGE) DA BASE DE VIDAS ATIVA — sem duplicar
+// ============================================================
+// Diferente de importarVidas (que substitui a fotografia de uma competência),
+// esta ação MESCLA o arquivo na competência ATIVA (a mais recente):
+//   • beneficiário já existente → atualiza apenas os campos preenchidos no
+//     arquivo (merge não-destrutivo: valor vazio NÃO apaga o que já existe);
+//   • beneficiário novo → é inserido na competência ativa;
+//   • quem não veio no arquivo → permanece intacto.
+// Assim é possível corrigir/atualizar dados sem criar um novo mês nem duplicar.
+
+export type MesclarVidasResult = {
+  ok: boolean
+  atualizados: number
+  inseridos: number
+  inalterados: number
+  ignorados: number
+  total: number
+  competencia: string
+  colunasDetectadas?: Record<string, string>
+  error?: string
+}
+
+export async function mesclarVidas(
+  formData: FormData,
+): Promise<MesclarVidasResult> {
+  const vazio: MesclarVidasResult = {
+    ok: false,
+    atualizados: 0,
+    inseridos: 0,
+    inalterados: 0,
+    ignorados: 0,
+    total: 0,
+    competencia: '',
+  }
+  try {
+    const file = formData.get('file') as File | null
+    if (!file) return { ...vazio, error: 'Nenhum arquivo enviado.' }
+
+    const supabase = await createClient()
+
+    // Competência ativa = a mais recente existente na base de vidas.
+    const { data: ultima, error: errComp } = await supabase
+      .from('beneficiario_vidas')
+      .select('competencia')
+      .order('competencia', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+    if (errComp) return { ...vazio, error: errComp.message }
+    const competencia = (ultima?.competencia as string | undefined) ?? ''
+    if (!competencia) {
+      return {
+        ...vazio,
+        error:
+          'Ainda não há uma base de vidas para atualizar. Importe uma base inicial (com competência) antes de usar a atualização.',
+      }
+    }
+
+    const conteudo = await file.text()
+    const { rows, mapeamento, erro } = parseVidas(conteudo)
+    if (erro)
+      return { ...vazio, competencia, error: erro, colunasDetectadas: mapeamento }
+    if (rows.length === 0) {
+      return {
+        ...vazio,
+        competencia,
+        colunasDetectadas: mapeamento,
+        error: 'Nenhum registro válido encontrado no arquivo.',
+      }
+    }
+
+    // Deduplica o próprio arquivo pela carteirinha (mantém o último).
+    const dedup = new Map<string, VidaRow>()
+    for (const r of rows) dedup.set(r.carteirinha, r)
+    const finais = [...dedup.values()]
+
+    // Carrega os registros já existentes na competência ativa.
+    const carteirinhas = finais.map((r) => r.carteirinha)
+    const existentesPorCart = new Map<string, VidaRow>()
+    const PAGE = 500
+    for (let i = 0; i < carteirinhas.length; i += PAGE) {
+      const lote = carteirinhas.slice(i, i + PAGE)
+      const { data, error } = await supabase
+        .from('beneficiario_vidas')
+        .select(
+          'carteirinha, nome, cpf, tipo, sexo, data_nascimento, plano, empresa, data_adesao, status',
+        )
+        .eq('competencia', competencia)
+        .in('carteirinha', lote)
+      if (error)
+        return { ...vazio, competencia, error: error.message, colunasDetectadas: mapeamento }
+      for (const row of (data ?? []) as VidaRow[]) {
+        existentesPorCart.set(row.carteirinha, row)
+      }
+    }
+
+    // Campos mesclados de forma não-destrutiva (vazio não apaga).
+    const CAMPOS: (keyof Omit<VidaRow, 'carteirinha'>)[] = [
+      'nome',
+      'cpf',
+      'tipo',
+      'sexo',
+      'data_nascimento',
+      'plano',
+      'empresa',
+      'data_adesao',
+      'status',
+    ]
+    const nowIso = new Date().toISOString()
+    const payload: (VidaRow & { competencia: string; updated_at: string })[] = []
+    let atualizados = 0
+    let inseridos = 0
+    let inalterados = 0
+
+    for (const novo of finais) {
+      const atual = existentesPorCart.get(novo.carteirinha)
+      if (!atual) {
+        payload.push({ ...novo, competencia, updated_at: nowIso })
+        inseridos++
+        continue
+      }
+      // Merge: mantém o atual e sobrescreve só com valores preenchidos do arquivo.
+      const merged: VidaRow = { ...atual, carteirinha: novo.carteirinha }
+      let mudou = false
+      for (const campo of CAMPOS) {
+        const valNovo = novo[campo]
+        if (valNovo != null && valNovo !== '' && valNovo !== atual[campo]) {
+          merged[campo] = valNovo
+          mudou = true
+        }
+      }
+      if (mudou) {
+        payload.push({ ...merged, competencia, updated_at: nowIso })
+        atualizados++
+      } else {
+        inalterados++
+      }
+    }
+
+    if (payload.length > 0) {
+      const { error } = await supabase
+        .from('beneficiario_vidas')
+        .upsert(payload, { onConflict: 'competencia,carteirinha' })
+      if (error)
+        return { ...vazio, competencia, error: error.message, colunasDetectadas: mapeamento }
+    }
+
+    // Sincroniza a base de nomes com os nomes trazidos no arquivo.
+    const comNome = finais
+      .filter((r) => r.nome)
+      .map((r) => ({
+        carteirinha: r.carteirinha,
+        nome: r.nome as string,
+        updated_at: nowIso,
+      }))
+    if (comNome.length > 0) {
+      await supabase
+        .from('beneficiario_nomes')
+        .upsert(comNome, { onConflict: 'carteirinha' })
+    }
+
+    revalidarTelasComNomes()
+
+    return {
+      ok: true,
+      atualizados,
+      inseridos,
+      inalterados,
+      ignorados: rows.length - finais.length,
+      total: finais.length,
+      competencia,
+      colunasDetectadas: mapeamento,
+    }
+  } catch (e) {
+    return {
+      ...vazio,
+      error: e instanceof Error ? e.message : 'Erro ao atualizar vidas.',
+    }
+  }
+}
+
 export type ImportNomesResult = {
   ok: boolean
   inseridos: number
