@@ -4,8 +4,11 @@ import { NextResponse, type NextRequest } from 'next/server'
 /**
  * Rotas explicitamente públicas. Todo o restante exige autenticação
  * (deny-by-default), incluindo páginas sensíveis e APIs internas.
+ * /api/sso/callback precisa ser pública: é justamente a rota que CRIA a
+ * sessão a partir do token assinado pelo Winners Broker (a própria rota
+ * valida o HMAC — nada passa sem assinatura válida).
  */
-const PUBLIC_PATHS = new Set(['/'])
+const PUBLIC_PATHS = new Set(['/', '/api/sso/callback'])
 
 function isPublicPath(pathname: string): boolean {
   return PUBLIC_PATHS.has(pathname)
