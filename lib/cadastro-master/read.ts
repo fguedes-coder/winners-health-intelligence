@@ -203,19 +203,20 @@ export function masterNaoRepresentados(
   conhecidos: {
     carteirinhas?: Set<string>
     cpfs?: Set<string>
+    matriculas?: Set<string>
     nomesNorm?: Set<string>
   },
 ): MasterCadastro[] {
-  const { carteirinhas, cpfs, nomesNorm } = conhecidos
+  const { carteirinhas, cpfs, matriculas, nomesNorm } = conhecidos
   const novos: MasterCadastro[] = []
   for (const m of index.list) {
     const id = index.identidadeDe(m)
     const jaExiste =
       (id.carteirinha != null && carteirinhas?.has(id.carteirinha)) ||
       (id.cpf != null && cpfs?.has(id.cpf)) ||
-      (id.matricula != null &&
-        index.byMatricula.has(id.matricula)) ||
+      (id.matricula != null && matriculas?.has(id.matricula)) ||
       (id.nomeNorm != null && nomesNorm?.has(id.nomeNorm))
     if (!jaExiste) novos.push(m)
-  }  return novos
+  }
+  return novos
 }
