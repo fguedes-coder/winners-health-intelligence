@@ -175,6 +175,8 @@ export class UnificadorIdentidade {
   private cartTo = new Map<string, string>()
   private matTo = new Map<string, string>()
   private nomeTo = new Map<string, string>()
+  /** Nomes compartilhados por mais de uma pessoa: nunca fundem sozinhos. */
+  private nomesAmbiguos = new Set<string>()
 
   private criarSlot(partial: Partial<SlotUnificado>): string {
     const id = `slot:${++seqUnificador}`
@@ -210,6 +212,36 @@ export class UnificadorIdentidade {
     }
   }
 
+  /**
+   * Identificadores fortes divergentes indicam pessoas distintas (homônimos):
+   * CPF, matrícula ou carteirinha não nulos e diferentes nos dois lados.
+   */
+  private conflitaIdentidadeForte(
+    id: IdentidadeNormalizada,
+    slot: SlotUnificado,
+  ): boolean {
+    if (id.cpf && slot.cpf && id.cpf !== slot.cpf) return true
+    if (id.matricula && slot.matricula && id.matricula !== slot.matricula) {
+      return true
+    }
+    if (id.carteirinha) {
+      const carts = new Set<string>()
+      for (const v of slot.variantesCart) {
+        const n = normalizarCarteirinha(v)
+        if (n) carts.add(n)
+      }
+      if (
+        slot.carteirinhaCanonica &&
+        !slot.carteirinhaCanonica.startsWith('master:')
+      ) {
+        const n = normalizarCarteirinha(slot.carteirinhaCanonica)
+        if (n) carts.add(n)
+      }
+      if (carts.size > 0 && !carts.has(id.carteirinha)) return true
+    }
+    return false
+  }
+
   private encontrarSlots(id: IdentidadeNormalizada): Set<string> {
     const found = new Set<string>()
     if (id.cpf && this.cpfTo.has(id.cpf)) found.add(this.cpfTo.get(id.cpf)!)
@@ -219,8 +251,16 @@ export class UnificadorIdentidade {
     if (id.matricula && this.matTo.has(id.matricula)) {
       found.add(this.matTo.get(id.matricula)!)
     }
-    if (id.nomeNorm && this.nomeTo.has(id.nomeNorm)) {
-      found.add(this.nomeTo.get(id.nomeNorm)!)
+    // Nome só funde quando não é ambíguo e não há identificador forte
+    // conflitante — evita associar dados de saúde de homônimos.
+    if (id.nomeNorm && !this.nomesAmbiguos.has(id.nomeNorm)) {
+      const porNome = this.nomeTo.get(id.nomeNorm)
+      if (porNome) {
+        const slot = this.slots.get(porNome)
+        if (slot && !this.conflitaIdentidadeForte(id, slot)) {
+          found.add(porNome)
+        }
+      }
     }
     return found
   }
@@ -300,9 +340,11 @@ export class UnificadorIdentidade {
         this.mesclarSlots(slotId, other)
       }
       const slot = this.slots.get(slotId)!
-      if (id.cpf) slot.cpf = id.cpf
-      if (id.matricula) slot.matricula = id.matricula
-      if (id.nomeNorm) slot.nomeNorm = id.nomeNorm
+      // Preenche apenas quando vazio: sobrescrever CPF/matrícula/nome do slot
+      // mascararia conflito de identidade entre pessoas distintas.
+      if (id.cpf && !slot.cpf) slot.cpf = id.cpf
+      if (id.matricula && !slot.matricula) slot.matricula = id.matricula
+      if (id.nomeNorm && !slot.nomeNorm) slot.nomeNorm = id.nomeNorm
       if (opts?.masterId) slot.masterId = opts.masterId
       if (opts?.temVida) {
         slot.temVida = true
@@ -315,6 +357,15 @@ export class UnificadorIdentidade {
       for (const v of variantes) slot.variantesCart.add(v)
       if (!slot.carteirinhaCanonica && id.carteirinha) {
         slot.carteirinhaCanonica = id.carteirinha
+      }
+    }
+
+    // Nome já apontando para OUTRO slot = duas pessoas com o mesmo nome.
+    // Marca como ambíguo para que nunca mais funda sozinho.
+    if (id.nomeNorm) {
+      const existente = this.nomeTo.get(id.nomeNorm)
+      if (existente && existente !== slotId) {
+        this.nomesAmbiguos.add(id.nomeNorm)
       }
     }
 
