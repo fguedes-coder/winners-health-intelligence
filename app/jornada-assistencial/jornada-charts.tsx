@@ -13,11 +13,8 @@ import {
   XAxis,
   YAxis,
 } from 'recharts'
-import {
-  formatBRL2 as formatBRL,
-  type CategoriaCusto,
-  type PontoCusto,
-} from './mock-data'
+import { formatBRLCents as formatBRL } from '@/lib/data'
+import { type CategoriaCusto, type PontoCusto } from './mock-data'
 
 const axisProps = {
   stroke: 'var(--muted-foreground)',
