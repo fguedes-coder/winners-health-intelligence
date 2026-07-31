@@ -29,8 +29,8 @@ import {
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { EventoDetalhado } from '@/lib/queries'
+import { formatBRLCents as formatBRL } from '@/lib/data'
 import {
-  formatBRL2 as formatBRL,
   type Beneficiario,
   type BeneficiarioResumo,
   type JornadaKpis,

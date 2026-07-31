@@ -7,20 +7,13 @@ import type { TopBeneficiarioRisco } from '@/lib/radar-agg'
 import type { EventoDetalhado } from '@/lib/queries'
 import type { PanoramaFiltros } from '@/lib/beneficiary-panorama'
 import { BeneficiaryPanoramaDrawer } from '@/components/beneficiary-panorama-drawer'
+import { formatBRL } from '@/lib/data'
 
 function prioridadeDe(score: number): { label: string; classe: string } {
   if (score >= 95) return { label: 'Crítica', classe: 'text-red-400' }
   if (score >= 70) return { label: 'Alta', classe: 'text-orange-400' }
   if (score >= 40) return { label: 'Moderada', classe: 'text-amber-400' }
   return { label: 'Baixa', classe: 'text-emerald-400' }
-}
-
-function formatBRL(valor: number): string {
-  return valor.toLocaleString('pt-BR', {
-    style: 'currency',
-    currency: 'BRL',
-    maximumFractionDigits: 0,
-  })
 }
 
 export function TopVidasTable({

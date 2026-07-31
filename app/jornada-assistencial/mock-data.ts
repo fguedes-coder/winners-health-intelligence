@@ -1,15 +1,7 @@
 // Tipos e utilitários da Jornada Assistencial — Winners Health Intelligence.
 // Os dados são derivados dos eventos de utilização reais (ver adapter.ts);
-// este módulo mantém apenas os contratos de view-model e o formatador de moeda.
-
-// Moeda com centavos (a referência exibe valores como "R$ 48.732,10").
-export const formatBRL2 = (value: number) =>
-  new Intl.NumberFormat('pt-BR', {
-    style: 'currency',
-    currency: 'BRL',
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(value)
+// este módulo mantém apenas os contratos de view-model. O formatador de moeda
+// com centavos vive em lib/data.ts (formatBRLCents).
 
 export type Risco = 'Crítico' | 'Alto' | 'Moderado' | 'Baixo'
 
