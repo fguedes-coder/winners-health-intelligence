@@ -9,3 +9,9 @@ node_modules
 .env*.local
 .DS_Store
 .vercel
+.env*
+
+# Artefatos de documentação com dados sensíveis (LGPD) — nunca versionar.
+# A pasta contém PDFs/relatórios e screenshots que podem exibir nomes reais de
+# beneficiários e custos de saúde (ex.: 24-relatorios-executivo.pdf).
+docs/screenshots/
