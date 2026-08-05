@@ -113,7 +113,20 @@ export async function GET(request: NextRequest) {
 
   // Análise consultiva Winners Decide IA (mesma lógica do endpoint /analyze:
   // OpenAI quando há chave, senão determinística). Sempre sobre dados anonimizados.
-  const analiseIA = await gerarAnaliseWinnersDecide(eventos, faturaPorCompetencia)
+  //
+  // O recorte por competência é obrigatório: `eventos` vem de getWinnersDataset()
+  // sem filtro, e sem este recorte a IA monta o payload sobre a carteira inteira
+  // e descreve números de outras competências num relatório mensal (ex.: citar
+  // internações acumuladas do ano num PDF de um único mês). Mesma regra de
+  // recorte usada por resumirRadar/resumirSaudeMental.
+  const mesSet = new Set(mes)
+  const eventosDoRecorte = mesSet.size
+    ? eventos.filter((e) => e.competencia && mesSet.has(e.competencia))
+    : eventos
+  const analiseIA = await gerarAnaliseWinnersDecide(
+    eventosDoRecorte,
+    faturaPorCompetencia,
+  )
 
   // Mini-resumos dos 3 maiores ofensores financeiros (páginas individuais).
   // Reutiliza o mesmo núcleo determinístico da página do beneficiário, para
