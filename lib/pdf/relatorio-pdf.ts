@@ -2,11 +2,7 @@ import 'server-only'
 
 import { jsPDF } from 'jspdf'
 import { formatBRL } from '@/lib/data'
-import {
-  K_ANONIMATO,
-  aplicarKAnonimato,
-  rotuloPrestadorSeguro,
-} from '@/lib/privacidade-clinica'
+import { K_ANONIMATO, rotuloPrestadorSeguro } from '@/lib/privacidade-clinica'
 import type { DashboardData, PainelData } from '@/lib/queries'
 import type { AnaliseExecutiva } from '@/lib/analise-ia'
 import type { ResumoRadar } from '@/lib/radar-agg'
@@ -2097,21 +2093,21 @@ class Relatorio {
     if (data.utilizacaoMensal.length > 0) {
       this.groupedBarsUtilizacao(data.utilizacaoMensal)
     }
-    // Descrições de procedimento passam pela camada de privacidade clínica
-    // antes de virar rótulo: capítulos sensíveis são generalizados e linhas
-    // com menos de K beneficiários distintos entram em "Demais procedimentos".
-    const categoriasSeguras = aplicarKAnonimato(data.categoriasDetalhadas)
-    const categoriaChartData = categoriasSeguras.linhas.slice(0, 8)
+    // Categorias GERENCIAIS (12 grupos fixos), não as descrições de
+    // procedimento do arquivo. Duas razões: o "serviço principal" da operadora
+    // é praticamente o nome do procedimento — numa carteira pequena quase toda
+    // descrição tem menos de K beneficiários e o k-anonimato jogaria a maior
+    // parte do valor num balde residual, deixando o gráfico ilegível; e grupo
+    // gerencial não revela condição de saúde de ninguém, então o relatório do
+    // cliente não precisa carregar descrição de procedimento em lugar nenhum.
+    const categoriaChartData = [...data.categoriasGerenciais]
+      .sort((a, b) => b.valor - a.valor)
+      .slice(0, 8)
     if (categoriaChartData.length > 0) {
       this.subTitle('Principais categorias por valor')
       this.hBarsCategorias(
         categoriaChartData.map((c) => ({ nome: c.nome, valor: c.valor })),
       )
-      if (categoriasSeguras.suprimidas > 0) {
-        this.nota(
-          `Procedimentos utilizados por menos de ${K_ANONIMATO} beneficiários no período são agregados em "Demais procedimentos", e descrições que revelam condição de saúde sensível são apresentadas pelo capítulo clínico. Sem essa proteção, uma linha isolada permitiria reidentificar a pessoa atendida (LGPD, arts. 11 e 12).`,
-        )
-      }
     }
 
     // 6. CUSTO ASSISTENCIAL
