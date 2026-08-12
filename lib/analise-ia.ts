@@ -52,7 +52,11 @@ export function gerarAnaliseExecutiva(
     )
   }
 
-  const catTop = data.categoriasDetalhadas[0]
+  // Categoria GERENCIAL, nunca a descrição do procedimento: o "serviço
+  // principal" do arquivo é o nome do procedimento, e citá-lo aqui reintroduz
+  // no texto exatamente o dado sensível que a camada de privacidade remove das
+  // tabelas (ex.: "CURETAGEM POS-ABORTAMENTO lidera o valor utilizado").
+  const catTop = [...data.categoriasGerenciais].sort((a, b) => b.valor - a.valor)[0]
   if (catTop) {
     pontos.push(
       `A categoria "${catTop.nome}" lidera o valor utilizado, respondendo por ${catTop.pct.toFixed(1)}% do total.`,

@@ -12,6 +12,7 @@
 import type { EventoDetalhado } from '@/lib/queries'
 import {
   classificarEvento,
+  ehSaudeMental,
   subcategoriaDinamica,
   subcategoriaSaudeMental,
   ehPsiquiatria,
@@ -338,7 +339,7 @@ export function getBeneficiaryPanorama(
     if (cat === 'Pronto-Socorro') prontoSocorro++
     if (cat === 'Consultas') consultas++
     if (cat === 'Exames') exames++
-    if (cat === 'Saúde Mental' || e.saudeMental) saudeMental++
+    if (ehSaudeMental(e)) saudeMental++
     if (cat === 'Procedimentos' && e.valorPago >= LIMIARES.procedimentoAltoCusto)
       procedimentosAltoCusto++
     if (cat === 'Medicamentos' && e.valorPago >= LIMIARES.medicamentoAltoCusto)
@@ -487,7 +488,7 @@ export function getBeneficiaryPanorama(
 
   // --- Detalhe de saúde mental --------------------------------------------
   const smEventos = meus.filter(
-    (e) => e.saudeMental || classificarEvento(e) === 'Saúde Mental',
+    (e) => ehSaudeMental(e),
   )
   let smValor = 0
   const smPsiq = { eventos: 0, valor: 0 }

@@ -4,9 +4,17 @@ import { createClient } from '@/lib/supabase/server'
 import type { Importacao } from '@/app/uploads/actions'
 import {
   classificarEvento,
+  ehInternacao,
+  ehSaudeMental,
   categoriaDinamica,
   subcategoriaDinamica,
 } from '@/lib/categorias'
+import {
+  chavePrestador,
+  consolidarPrestadores,
+  normalizarNomePrestador,
+  rotuloPrestador,
+} from '@/lib/prestadores'
 import { beneficiarioLabel } from '@/lib/display-prefs'
 import { getBenefDisplay } from '@/lib/display-prefs-server'
 import {
@@ -124,6 +132,9 @@ export { competenciaCurta as mesCurto }
 
 type RankRow = {
   nome: string
+  // Beneficiários distintos atendidos (rankings de prestadores) — base do
+  // k-anonimato na exibição do relatório.
+  beneficiarios?: number
   // Carteirinha estável do beneficiário (usada em drill-down e como fallback).
   // Ausente para rankings de prestadores.
   carteirinha?: string
@@ -165,9 +176,13 @@ export type PainelData = {
   } | null
 }
 
-function mergeRank(target: Map<string, RankRow>, rows: RankRow[] | undefined) {
+function mergeRank(
+  target: Map<string, RankRow>,
+  rows: RankRow[] | undefined,
+  chave: (r: RankRow) => string = (r) => r.nome,
+) {
   for (const r of rows ?? []) {
-    const key = r.nome
+    const key = chave(r)
     const cur = target.get(key)
     if (cur) {
       cur.eventos += r.eventos
@@ -291,7 +306,12 @@ export async function getPainel(
     saudeMental += imp.total_saude_mental ?? 0
     totalEventos += imp.total_eventos ?? 0
     const resumo = imp.resumo
-    mergeRank(prestMap, resumo?.topPrestadores)
+    // Prestadores: nome normalizado como chave, porque os snapshots por
+    // importação trazem a mesma razão social grafada de formas diferentes.
+    // Utilizadores mantêm a chave original (é identificador de pessoa).
+    mergeRank(prestMap, resumo?.topPrestadores, (r) =>
+      normalizarNomePrestador(r.nome) || r.nome,
+    )
     mergeRank(utilMap, resumo?.topUtilizadores)
     for (const cat of resumo?.categorias ?? []) {
       catMap.set(cat.nome, (catMap.get(cat.nome) ?? 0) + cat.valor)
@@ -314,7 +334,7 @@ export async function getPainel(
     (faixa) => ({ faixa, beneficiarios: faixaMap.get(faixa) ?? 0 }),
   )
 
-  const topPrestadores = [...prestMap.values()]
+  const topPrestadores = consolidarPrestadores([...prestMap.values()])
     .sort((a, b) => b.valor - a.valor)
     .slice(0, 10)
   const topUtilizadores = [...utilMap.values()]
@@ -464,12 +484,16 @@ export type SubcategoriaRow = {
   valor: number
   pct: number // participação no valor total utilizado
   eventos: number
+  // Beneficiários distintos — base do k-anonimato na exibição (ver
+  // lib/privacidade-clinica.ts). Nunca exibir a contagem em si.
+  beneficiarios: number
 }
 export type CategoriaDetalhadaRow = {
   nome: string
   valor: number
   pct: number // participação no valor total utilizado
   eventos: number
+  beneficiarios: number
   subcategorias: SubcategoriaRow[]
 }
 
@@ -766,7 +790,10 @@ export async function getDashboardData(
   let periodoInicio: string | null = null
   let periodoFim: string | null = null
 
-  const prestMap = new Map<string, RankRow>()
+  const prestMap = new Map<
+    string,
+    { nome: string; eventos: number; valor: number; benef: Set<string> }
+  >()
   const utilMap = new Map<string, RankRow>()
   const catMap = new Map<string, { eventos: number; valor: number }>()
   // Categorias dinâmicas (campos reais do TXT) com subcategorias aninhadas.
@@ -775,7 +802,8 @@ export async function getDashboardData(
     {
       eventos: number
       valor: number
-      subs: Map<string, { eventos: number; valor: number }>
+      benef: Set<string>
+      subs: Map<string, { eventos: number; valor: number; benef: Set<string> }>
     }
   >()
   const idadePorPessoa = new Map<string, number | null>()
@@ -818,8 +846,17 @@ export async function getDashboardData(
 
     const valor = Number(e.valor_pago ?? 0)
     valorUtilizado += valor
-    if (e.internacao) internacoes++
-    if (e.saude_mental) saudeMental++
+    // Eixos (predicados compartilhados): mesma definição usada pela categoria
+    // gerencial e pelas seções de Saúde Mental — nunca recontar aqui.
+    const eventoInternacao = ehInternacao({ internacao: e.internacao })
+    const eventoSaudeMental = ehSaudeMental({
+      servicoPrincipal: e.servico_principal,
+      servico: e.servico,
+      grupoEstatistico: e.grupo_estatistico,
+      saudeMental: e.saude_mental,
+    })
+    if (eventoInternacao) internacoes++
+    if (eventoSaudeMental) saudeMental++
 
     if (e.data_atendimento) {
       if (!periodoInicio || e.data_atendimento < periodoInicio)
@@ -833,10 +870,20 @@ export async function getDashboardData(
 
     // Prestador
     if (e.prestador_nome) {
-      const k = e.prestador_cnpj || e.prestador_nome
-      const cur = prestMap.get(k) ?? { nome: e.prestador_nome, eventos: 0, valor: 0 }
+      // Chave canônica (CNPJ quando houver, senão razão social normalizada):
+      // sem isso "GLORIA D OR" e "GLORIA DOR" viram duas linhas no ranking.
+      const k = chavePrestador(e.prestador_cnpj, e.prestador_nome)
+      const cur =
+        prestMap.get(k) ??
+        {
+          nome: rotuloPrestador(e.prestador_nome),
+          eventos: 0,
+          valor: 0,
+          benef: new Set<string>(),
+        }
       cur.eventos++
       cur.valor += valor
+      cur.benef.add(pid)
       prestMap.set(k, cur)
     }
 
@@ -870,8 +917,10 @@ export async function getDashboardData(
     c.valor += valor
     catMap.set(cat, c)
 
-    // Agregados de Saúde Mental (categoria gerencial), alinhados à Utilização.
-    if (cat === 'Saúde Mental') {
+    // Agregados de Saúde Mental (eixo, não a partição): uma internação
+    // psiquiátrica conta como internação na composição por tipo E como
+    // utilização de saúde mental aqui.
+    if (eventoSaudeMental) {
       smBenef.add(pid)
       smUtilizacoes++
       smCusto += valor
@@ -890,12 +939,23 @@ export async function getDashboardData(
     })
     const cd =
       catDetMap.get(catDinNome) ??
-      { eventos: 0, valor: 0, subs: new Map<string, { eventos: number; valor: number }>() }
+      {
+        eventos: 0,
+        valor: 0,
+        benef: new Set<string>(),
+        subs: new Map<
+          string,
+          { eventos: number; valor: number; benef: Set<string> }
+        >(),
+      }
     cd.eventos++
     cd.valor += valor
-    const sd = cd.subs.get(subDinNome) ?? { eventos: 0, valor: 0 }
+    cd.benef.add(pid)
+    const sd =
+      cd.subs.get(subDinNome) ?? { eventos: 0, valor: 0, benef: new Set<string>() }
     sd.eventos++
     sd.valor += valor
+    sd.benef.add(pid)
     cd.subs.set(subDinNome, sd)
     catDetMap.set(catDinNome, cd)
 
@@ -915,9 +975,9 @@ export async function getDashboardData(
       cm.pessoas.add(pid)
       cm.eventos++
       cm.valor += valor
-      if (e.internacao) cm.internacoes++
-      if (e.saude_mental) cm.saudeMental++
-      if (cat === 'Saúde Mental') cm.saudeMentalValor += valor
+      if (eventoInternacao) cm.internacoes++
+      if (eventoSaudeMental) cm.saudeMental++
+      if (eventoSaudeMental) cm.saudeMentalValor += valor
       compMap.set(mes, cm)
     }
 
@@ -997,12 +1057,14 @@ export async function getDashboardData(
       nome,
       valor: v.valor,
       eventos: v.eventos,
+      beneficiarios: v.benef.size,
       pct: valorUtilizado ? (v.valor / valorUtilizado) * 100 : 0,
       subcategorias: [...v.subs.entries()]
         .map(([sn, sv]) => ({
           nome: sn,
           valor: sv.valor,
           eventos: sv.eventos,
+          beneficiarios: sv.benef.size,
           pct: valorUtilizado ? (sv.valor / valorUtilizado) * 100 : 0,
         }))
         .sort((a, b) => b.valor - a.valor),
@@ -1219,9 +1281,16 @@ export async function getDashboardData(
           benefDisplayMode,
         ),
       })),
-    topPrestadores: [...prestMap.values()]
+    // Funde grupos com o mesmo nome normalizado (cobre eventos sem CNPJ).
+    topPrestadores: consolidarPrestadores([...prestMap.values()])
       .sort((a, b) => b.valor - a.valor)
-      .slice(0, 10),
+      .slice(0, 10)
+      .map(({ nome, eventos, valor, benef }) => ({
+        nome,
+        eventos,
+        valor,
+        beneficiarios: benef.size,
+      })),
     subestipulanteResumo,
     faixaEtaria,
     tipoUtilizacao,

@@ -174,16 +174,44 @@ export function subcategoriaDinamica(e: ClassificavelInput): string {
   return v || SEM_CLASSIFICACAO
 }
 
+// ---------------------------------------------------------------------------
+// Eixos independentes da classificação gerencial.
+//
+// "Internação" e "saúde mental" são ATRIBUTOS do evento, não categorias
+// concorrentes: uma internação psiquiátrica é internação E é saúde mental.
+// As seções que medem cada eixo (KPI de internações, seção de Saúde Mental)
+// devem usar estes predicados; a categoria gerencial abaixo é uma PARTIÇÃO
+// (cada evento em uma única categoria) e serve para compor valor por tipo.
+// ---------------------------------------------------------------------------
+
+/** Eixo internação: fonte única para o KPI e para a categoria 'Internações'. */
+export function ehInternacao(e: ClassificavelInput): boolean {
+  return Boolean(e.internacao)
+}
+
+/** Eixo saúde mental: flag do arquivo ou descrição do serviço. */
+export function ehSaudeMental(e: ClassificavelInput): boolean {
+  if (e.saudeMental) return true
+  const texto = [e.servicoPrincipal, e.servico, e.grupoEstatistico]
+    .filter(Boolean)
+    .join(' ')
+    .toUpperCase()
+  return RE_SAUDE_MENTAL.test(texto)
+}
+
 export function classificarEvento(e: ClassificavelInput): CategoriaGerencial {
   const texto = [e.servicoPrincipal, e.servico, e.grupoEstatistico]
     .filter(Boolean)
     .join(' ')
     .toUpperCase()
 
+  // A internação domina a partição: um evento internado é contabilizado como
+  // internação mesmo quando a origem é PS, obstétrica ou psiquiátrica. Sem
+  // isso o KPI de internações (eixo) diverge da composição por tipo (partição).
+  if (ehInternacao(e)) return 'Internações'
   if (e.saudeMental || RE_SAUDE_MENTAL.test(texto)) return 'Saúde Mental'
   if (RE_MATERNIDADE.test(texto)) return 'Maternidade / Pré-Natal'
   if (RE_PRONTO_SOCORRO.test(texto)) return 'Pronto-Socorro'
-  if (e.internacao) return 'Internações'
   if (RE_CONSULTA.test(texto)) return 'Consultas'
   if (RE_EXAME.test(texto)) return 'Exames'
   if (RE_TERAPIA.test(texto)) return 'Terapias'

@@ -1,7 +1,7 @@
 import 'server-only'
 
 import type { EventoDetalhado } from '@/lib/queries'
-import { classificarEvento, ehPsiquiatria } from '@/lib/categorias'
+import { ehPsiquiatria, ehSaudeMental } from '@/lib/categorias'
 import type { Anonimizador, ModoPrivacidade } from '@/lib/anonimizar'
 
 // ===========================================================================
@@ -77,15 +77,15 @@ export function resumirSaudeMental(
     if (!dentro(e)) continue
     custoAssistencialTotal += e.valorPago
 
-    const categoria = classificarEvento({
+    // Eixo saúde mental (predicado compartilhado), não a partição gerencial:
+    // uma internação psiquiátrica pertence a esta seção e à de internações.
+    const eventoSaudeMental = ehSaudeMental({
       servicoPrincipal: e.servicoPrincipal,
       servico: e.servico,
       grupoEstatistico: e.grupoEstatistico,
-      categoriaAtendimento: e.categoriaAtendimento,
-      internacao: e.internacao,
       saudeMental: e.saudeMental,
     })
-    if (categoria !== 'Saúde Mental') continue
+    if (!eventoSaudeMental) continue
 
     if (e.competencia) {
       smPorComp.set(e.competencia, (smPorComp.get(e.competencia) ?? 0) + e.valorPago)

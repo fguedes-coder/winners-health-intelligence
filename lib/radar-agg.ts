@@ -8,7 +8,7 @@
 // ===========================================================================
 
 import type { EventoDetalhado } from '@/lib/queries'
-import { classificarEvento, mesCurto } from '@/lib/categorias'
+import { classificarEvento, ehSaudeMental, mesCurto } from '@/lib/categorias'
 import {
   criarAnonimizador,
   type Anonimizador,
@@ -136,8 +136,15 @@ export type ResumoIntervencao = {
   pctCustoPrioritario: number
   // Resumo executivo determinístico de oportunidades.
   resumoOportunidades: string
-  // Top 3 ofensores por custo (para páginas individuais no PDF).
-  topOfensores: { carteirinha: string; display: string; valorTotal: number }[]
+  // Top 3 ofensores por custo (para páginas individuais no PDF), com a mesma
+  // classificação usada na tabela de prioritários.
+  topOfensores: BeneficiarioPrioritario[]
+  /**
+   * Classificação canônica por beneficiário (chave: carteirinha base).
+   * Fonte única de prioridade, risco futuro e potencial de economia para
+   * todas as seções do relatório.
+   */
+  classificacoes: Record<string, BeneficiarioPrioritario>
 }
 
 export type ResumoRadar = {
@@ -256,7 +263,7 @@ export function resumirRadar(
       if (e.competencia) a.compsInternacao.add(e.competencia)
     }
     if (e.categoria === 'Pronto-Socorro') a.prontoSocorro++
-    if (e.categoria === 'Saúde Mental' || e.saudeMental) a.saudeMental++
+    if (ehSaudeMental(e)) a.saudeMental++
     if (
       e.categoria === 'Procedimentos' &&
       e.valorPago >= LIMIARES.procedimentoAltoCusto
@@ -793,16 +800,45 @@ function montarIntervencao(
       participacaoPct: c.participacaoPct,
     }))
 
-  // Top 3 ofensores por custo (páginas individuais no PDF).
-  const topOfensores = classificadas
+  // Top 3 ofensores por custo (páginas individuais no PDF). Carregam a MESMA
+  // classificação da tabela de prioritários — antes cada seção reclassificava
+  // por conta própria e o mesmo beneficiário aparecia como Moderado numa e
+  // Alto na outra.
+  const topOfensores: BeneficiarioPrioritario[] = classificadas
     .slice()
     .sort((x, y) => y.valorTotal - x.valorTotal)
     .slice(0, 3)
     .map((c) => ({
       carteirinha: c.carteirinha,
       display: c.display,
+      prioridadeNivel: c.prioridadeNivel,
+      prioridadeRotulo: PRIORIDADE_ROTULO[c.prioridadeNivel],
+      prioridadeIndice: c.prioridadeIndice,
+      riscoFuturo: c.riscoFuturo,
+      economia: c.economia,
+      score: c.score,
       valorTotal: c.valorTotal,
+      participacaoPct: c.participacaoPct,
     }))
+
+  // Fonte única de classificação por beneficiário, indexada pela carteirinha
+  // base. Qualquer seção que precise de prioridade / risco futuro / economia
+  // deve ler daqui, nunca reclassificar.
+  const classificacoes: Record<string, BeneficiarioPrioritario> = {}
+  for (const c of classificadas) {
+    classificacoes[c.carteirinha] = {
+      carteirinha: c.carteirinha,
+      display: c.display,
+      prioridadeNivel: c.prioridadeNivel,
+      prioridadeRotulo: PRIORIDADE_ROTULO[c.prioridadeNivel],
+      prioridadeIndice: c.prioridadeIndice,
+      riscoFuturo: c.riscoFuturo,
+      economia: c.economia,
+      score: c.score,
+      valorTotal: c.valorTotal,
+      participacaoPct: c.participacaoPct,
+    }
+  }
 
   const vidasP1 = contagemPrioridade.P1
   const vidasP2 = contagemPrioridade.P2
@@ -818,6 +854,7 @@ function montarIntervencao(
 
   return {
     prioritarios,
+    classificacoes,
     distribuicaoPrioridade,
     distribuicaoEconomia,
     contagemPrioridade,

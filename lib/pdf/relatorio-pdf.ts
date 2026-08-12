@@ -2,6 +2,7 @@ import 'server-only'
 
 import { jsPDF } from 'jspdf'
 import { formatBRL } from '@/lib/data'
+import { K_ANONIMATO, rotuloPrestadorSeguro } from '@/lib/privacidade-clinica'
 import type { DashboardData, PainelData } from '@/lib/queries'
 import type { AnaliseExecutiva } from '@/lib/analise-ia'
 import type { ResumoRadar } from '@/lib/radar-agg'
@@ -776,6 +777,23 @@ class Relatorio {
     for (const linha of linhas) {
       this.ensure(lh)
       this.doc.text(linha, MARGIN, this.y)
+      this.y += lh
+    }
+    this.y += 6
+  }
+
+  /** Nota de rodapé da seção: texto pequeno, cinza, com recuo de marcador. */
+  private nota(texto: string) {
+    const size = 8
+    this.font('normal', size)
+    this.ink(MUTED)
+    const linhas = this.doc.splitTextToSize(texto, USABLE_W - 12) as string[]
+    const lh = size * 1.3
+    this.y += 4
+    for (let i = 0; i < linhas.length; i++) {
+      this.ensure(lh)
+      if (i === 0) this.doc.text('*', MARGIN, this.y)
+      this.doc.text(linhas[i], MARGIN + 12, this.y)
       this.y += lh
     }
     this.y += 6
@@ -1933,7 +1951,11 @@ class Relatorio {
     let n = 11
     const numSaudeMental = temSaudeMental ? String(n++) : null
     const numEconomia = temPlano ? String(n++) : null
-    const numIA = analiseIA ? String(n++) : null
+    // Seção suprimida quando a análise não passou na validação automática:
+    // sem número, sem entrada no sumário e sem página. Relatório sem a seção é
+    // publicável; relatório que se contradiz não é.
+    const iaPublicavel = Boolean(analiseIA && analiseIA.fonte !== 'suprimida')
+    const numIA = iaPublicavel ? String(n++) : null
     const numConclusoes = String(n++)
     if (numSaudeMental) secoes.push({ num: numSaudeMental, nome: 'Saúde Mental' })
     if (numEconomia) secoes.push({ num: numEconomia, nome: 'Oportunidade de Economia' })
@@ -2071,7 +2093,16 @@ class Relatorio {
     if (data.utilizacaoMensal.length > 0) {
       this.groupedBarsUtilizacao(data.utilizacaoMensal)
     }
-    const categoriaChartData = data.categoriasDetalhadas.slice(0, 8)
+    // Categorias GERENCIAIS (12 grupos fixos), não as descrições de
+    // procedimento do arquivo. Duas razões: o "serviço principal" da operadora
+    // é praticamente o nome do procedimento — numa carteira pequena quase toda
+    // descrição tem menos de K beneficiários e o k-anonimato jogaria a maior
+    // parte do valor num balde residual, deixando o gráfico ilegível; e grupo
+    // gerencial não revela condição de saúde de ninguém, então o relatório do
+    // cliente não precisa carregar descrição de procedimento em lugar nenhum.
+    const categoriaChartData = [...data.categoriasGerenciais]
+      .sort((a, b) => b.valor - a.valor)
+      .slice(0, 8)
     if (categoriaChartData.length > 0) {
       this.subTitle('Principais categorias por valor')
       this.hBarsCategorias(
@@ -2117,6 +2148,9 @@ class Relatorio {
           formatBRL(t.valor),
           pct(t.pctValor),
         ]),
+      )
+      this.nota(
+        'Cada evento é contabilizado em uma única categoria. Eventos com internação entram em "Internações" independentemente da origem (pronto-socorro, obstétrica ou psiquiátrica), de modo que esta tabela reconcilia com o indicador de internações do resumo executivo. As utilizações de saúde mental são apuradas por eixo clínico, em seção própria.',
       )
     }
 
@@ -2164,12 +2198,23 @@ class Relatorio {
       ],
       data.topPrestadores.slice(0, 10).map((p, i) => [
         String(i + 1),
-        p.nome,
+        // Razão social que revela especialidade sensível é substituída pela
+        // especialidade quando o prestador atendeu menos de K vidas.
+        rotuloPrestadorSeguro(p.nome, p.beneficiarios).rotulo,
         String(p.eventos),
         formatBRL(p.valor),
         k.valorUtilizado > 0 ? pct((p.valor / k.valorUtilizado) * 100) : '—',
       ]),
     )
+    if (
+      data.topPrestadores
+        .slice(0, 10)
+        .some((p) => rotuloPrestadorSeguro(p.nome, p.beneficiarios).suprimido)
+    ) {
+      this.nota(
+        `Prestadores cuja razão social revela especialidade (saúde da mulher, oncologia, saúde mental, pediatria, infectologia) e que atenderam menos de ${K_ANONIMATO} vidas no período são identificados pela especialidade, não pelo nome — a combinação nome + baixa contagem revelaria a condição de saúde do beneficiário.`,
+      )
+    }
 
     // 10. RADAR DE RISCO
     this.newContentPage()
@@ -2256,7 +2301,7 @@ class Relatorio {
     }
 
     // WINNERS DECIDE IA (análise consultiva)
-    if (numIA && analiseIA) {
+    if (numIA && analiseIA && analiseIA.fonte !== 'suprimida') {
       this.secaoWinnersDecideIA(numIA, analiseIA)
     }
 
