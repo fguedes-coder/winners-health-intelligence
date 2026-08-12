@@ -5,10 +5,13 @@ import { createOpenAI } from '@ai-sdk/openai'
 
 import type { EventoDetalhado } from '@/lib/queries'
 import {
+  filtrarEventos,
   montarPayloadIA,
   gerarResumoMock,
+  gerarRespostaChatMock,
   PROMPT_SISTEMA,
   FILTROS_VAZIOS,
+  type PayloadIA,
   type WinnersFiltros,
 } from '@/lib/winners-decide'
 import {
@@ -18,6 +21,15 @@ import {
   validarAnaliseIA,
   type FatosCarteira,
 } from '@/lib/winners-decide-guardrails'
+
+/**
+ * 'resumo' — análise executiva consultiva completa da carteira.
+ * 'chat'   — resposta a uma pergunta pontual sobre o mesmo recorte.
+ */
+export type ModoAnalise = 'resumo' | 'chat'
+
+/** Por que o texto não veio do modelo. Permite ao chamador montar o aviso. */
+export type MotivoFallback = 'sem-chave' | 'erro-provedor' | 'validacao'
 
 export type AnaliseIA = {
   texto: string
@@ -29,9 +41,17 @@ export type AnaliseIA = {
   fonte: 'ia' | 'deterministica' | 'suprimida'
   /** Motivos das rejeições, para log e para a nota da seção. */
   violacoes: string[]
+  /** Ausente quando `fonte === 'ia'`. */
+  motivo?: MotivoFallback
+  /** Payload anonimizado que originou o texto — mesma base para quem exibe. */
+  payload: PayloadIA
 }
 
-type PayloadIA = ReturnType<typeof montarPayloadIA>
+export type OpcoesAnalise = {
+  modo?: ModoAnalise
+  /** Pergunta do usuário; usada apenas no modo 'chat'. */
+  pergunta?: string
+}
 
 /** Fatos do período contra os quais o texto gerado é conferido. */
 function extrairFatos(payload: PayloadIA, faturaTotal: number | null): FatosCarteira {
@@ -46,34 +66,47 @@ function extrairFatos(payload: PayloadIA, faturaTotal: number | null): FatosCart
   }
 }
 
-function promptUsuario(payload: PayloadIA): string {
+function promptResumo(payload: PayloadIA): string {
   return `Gere a análise executiva consultiva completa da carteira com base nos dados anonimizados a seguir (JSON). Interprete os dados (não apenas os descreva) e estruture a resposta em markdown seguindo a estrutura obrigatória de 6 seções: Leitura Executiva, Principais Causas, Riscos e Tendências, Oportunidades de Economia, Recomendações Prioritárias e Mensagem para Diretoria.\n\n${JSON.stringify(payload, null, 2)}`
 }
 
-// Reutiliza exatamente a mesma análise consultiva do módulo Winners Decide IA
-// (endpoint /api/winners-decide/analyze): monta o payload anonimizado, tenta a
-// OpenAI quando OPENAI_API_KEY está configurada e cai para a versão
-// determinística em caso de ausência de chave ou erro. Pensado para ser
-// chamado no servidor (ex.: geração do relatório executivo em PDF).
+function promptChat(pergunta: string, payload: PayloadIA): string {
+  return `Pergunta do usuário: "${pergunta}"\n\nResponda exclusivamente com base nos dados anonimizados a seguir (JSON):\n\n${JSON.stringify(payload, null, 2)}\n\nSeja objetivo e consultivo. Não identifique beneficiários. Não faça diagnóstico médico.`
+}
+
+// Fonte única da análise consultiva do Winners Decide IA: usada tanto pela tela
+// (endpoint /api/winners-decide/analyze) quanto pelo relatório executivo em PDF.
+// Monta o payload anonimizado, tenta a OpenAI quando OPENAI_API_KEY está
+// configurada e cai para a versão determinística em caso de ausência de chave
+// ou erro.
 //
-// Toda saída — do modelo ou determinística — passa pela validação de
-// `winners-decide-guardrails` antes de ser devolvida. Texto que cita valores
-// ou contagens acima do apurado, ou que projeta sem série histórica, é
-// rejeitado: primeiro tenta-se uma regeração corretiva, depois o determinístico
-// e, em último caso, a seção é suprimida. Um relatório sem a seção 13 é
-// publicável; um relatório que se contradiz não é.
+// Toda saída — do modelo ou determinística, em qualquer modo — passa pela
+// validação de `winners-decide-guardrails` antes de ser devolvida. Texto que
+// cita valores ou contagens acima do apurado, ou que projeta sem série
+// histórica, é rejeitado: primeiro tenta-se uma regeração corretiva, depois o
+// determinístico e, em último caso, a análise é suprimida. Uma tela (ou um
+// relatório) sem a seção é publicável; uma que se contradiz não é.
 export async function gerarAnaliseWinnersDecide(
   eventos: EventoDetalhado[],
   faturaPorCompetencia: Record<string, number>,
   filtros: Partial<WinnersFiltros> = {},
+  opcoes: OpcoesAnalise = {},
 ): Promise<AnaliseIA> {
+  const modo: ModoAnalise = opcoes.modo === 'chat' ? 'chat' : 'resumo'
+  const pergunta = (opcoes.pergunta ?? '').trim()
   const filtrosCompletos: WinnersFiltros = { ...FILTROS_VAZIOS, ...filtros }
   const payload = montarPayloadIA(eventos, filtrosCompletos, faturaPorCompetencia)
 
   // Teto monetário do período: a fatura pode superar o valor utilizado e é
   // citação legítima; qualquer valor acima dela é dado de outro recorte.
+  //
+  // O recorte tem de ser o mesmo que `montarPayloadIA` usa (filtrarEventos), e
+  // não a lista bruta recebida: o endpoint da tela envia a carteira inteira e
+  // restringe pelos `filtros`, então somar a fatura de todas as competências
+  // daria um teto alto demais justamente no caminho que a validação protege.
+  const eventosDoRecorte = filtrarEventos(eventos, filtrosCompletos)
   const competenciasDoRecorte = new Set(
-    eventos.map((e) => e.competencia).filter(Boolean) as string[],
+    eventosDoRecorte.map((e) => e.competencia).filter(Boolean) as string[],
   )
   const faturaTotal = [...competenciasDoRecorte].reduce(
     (soma, comp) => soma + (faturaPorCompetencia[comp] ?? 0),
@@ -81,31 +114,42 @@ export async function gerarAnaliseWinnersDecide(
   )
   const fatos = extrairFatos(payload, faturaTotal || null)
 
-  const determinista = (violacoes: string[]): AnaliseIA => {
-    const texto = gerarResumoMock(payload)
+  const determinista = (
+    violacoes: string[],
+    motivo: MotivoFallback,
+  ): AnaliseIA => {
+    const texto =
+      modo === 'chat'
+        ? gerarRespostaChatMock(pergunta, payload)
+        : gerarResumoMock(payload)
     const check = validarAnaliseIA(texto, fatos)
-    if (check.ok) return { texto, fonte: 'deterministica', violacoes }
+    if (check.ok) return { texto, fonte: 'deterministica', violacoes, motivo, payload }
     console.error(
-      '[relatorio] análise determinística também reprovou na validação:',
+      `[winners-decide] análise determinística (${modo}) também reprovou na validação:`,
       check.violacoes,
     )
     return {
       texto: '',
       fonte: 'suprimida',
       violacoes: [...violacoes, ...check.violacoes],
+      motivo,
+      payload,
     }
   }
 
   const apiKey = process.env.OPENAI_API_KEY
-  if (!apiKey) return determinista([])
+  if (!apiKey) return determinista([], 'sem-chave')
 
   const openai = createOpenAI({ apiKey })
   const sistema =
     fatos.competencias < MIN_COMPETENCIAS_PROJECAO
       ? `${PROMPT_SISTEMA}\n\n${regraSerieInsuficiente(fatos.competencias)}`
       : PROMPT_SISTEMA
+  const prompt =
+    modo === 'chat' ? promptChat(pergunta, payload) : promptResumo(payload)
 
   let violacoesAcumuladas: string[] = []
+  let erroProvedor = false
   for (let tentativa = 1; tentativa <= 2; tentativa++) {
     try {
       const { text } = await generateText({
@@ -113,22 +157,31 @@ export async function gerarAnaliseWinnersDecide(
         system: sistema,
         prompt:
           tentativa === 1
-            ? promptUsuario(payload)
-            : `${instrucaoCorrecao(violacoesAcumuladas)}\n\n${promptUsuario(payload)}`,
+            ? prompt
+            : `${instrucaoCorrecao(violacoesAcumuladas)}\n\n${prompt}`,
         temperature: tentativa === 1 ? 0.3 : 0.1,
       })
       const check = validarAnaliseIA(text, fatos)
-      if (check.ok) return { texto: text, fonte: 'ia', violacoes: violacoesAcumuladas }
+      if (check.ok) {
+        return { texto: text, fonte: 'ia', violacoes: violacoesAcumuladas, payload }
+      }
       violacoesAcumuladas = [...violacoesAcumuladas, ...check.violacoes]
       console.log(
-        `[relatorio] Winners Decide IA reprovada na validação (tentativa ${tentativa}):`,
+        `[winners-decide] análise reprovada na validação (${modo}, tentativa ${tentativa}):`,
         check.violacoes,
       )
     } catch (err) {
-      console.log('[relatorio] Winners Decide IA erro:', (err as Error).message)
+      console.log(
+        '[winners-decide] erro no provedor de IA:',
+        (err as Error).message,
+      )
+      erroProvedor = true
       break
     }
   }
 
-  return determinista(violacoesAcumuladas)
+  return determinista(
+    violacoesAcumuladas,
+    erroProvedor ? 'erro-provedor' : 'validacao',
+  )
 }
