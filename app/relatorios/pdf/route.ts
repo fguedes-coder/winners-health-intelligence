@@ -12,11 +12,6 @@ import { resumirRadar } from '@/lib/radar-agg'
 import { resumirSaudeMental } from '@/lib/saude-mental-agg'
 import { criarAnonimizador, normalizarModoPrivacidade } from '@/lib/anonimizar'
 import { getBeneficiaryPanorama } from '@/lib/beneficiary-panorama'
-import {
-  montarPayloadBeneficiario,
-  classificarPrioridadeIntervencao,
-  classificarPotencialEconomia,
-} from '@/lib/beneficiary-narrative'
 import { getRelatorioConfig } from '../actions'
 import { gerarRelatorioPdf, type MiniResumoBeneficiario } from '@/lib/pdf/relatorio-pdf'
 
@@ -129,37 +124,38 @@ export async function GET(request: NextRequest) {
   )
 
   // Mini-resumos dos 3 maiores ofensores financeiros (páginas individuais).
-  // Reutiliza o mesmo núcleo determinístico da página do beneficiário, para
-  // que Risco Futuro, Prioridade e Economia sejam idênticos ao Panorama.
+  //
+  // Prioridade, Risco Futuro e Potencial de Economia vêm da classificação
+  // canônica do Radar (resumirRadar → intervencao.classificacoes), a mesma que
+  // alimenta a tabela de prioritários e os gráficos de distribuição da seção.
+  // Antes, esta lista reclassificava por conta própria com outros limiares e o
+  // mesmo beneficiário aparecia como "Moderado" na tabela e "Alto" no card.
+  // Do Panorama vem apenas o texto da recomendação.
   const anon = modo === 'anonimizado'
-  const miniResumos: MiniResumoBeneficiario[] = data.topUtilizadores
-    .slice(0, 3)
-    .flatMap((u): MiniResumoBeneficiario[] => {
-      const carteirinha = u.carteirinha ?? u.nome
-      const panorama = getBeneficiaryPanorama(eventos, carteirinha, { mes })
-      if (!panorama.encontrado) return []
-      const payload = montarPayloadBeneficiario(panorama)
-      const prio = classificarPrioridadeIntervencao(
-        payload,
-        panorama.analise.prioridadeIntervencao,
-      )
-      const eco = classificarPotencialEconomia(payload)
-      const display = anon
-        ? anonimizador.rotular(carteirinha)
-        : panorama.nome || panorama.display
-      return [
-        {
-          display,
-          riscoFuturo: payload.risco_assistencial_futuro.nivel,
-          prioridadeNivel: prio.nivel,
-          prioridadeRotulo: prio.rotulo,
-          economia: eco.nivel,
-          participacaoPct: panorama.kpis.participacaoPct,
-          valorTotal: panorama.kpis.valorTotal,
-          resumo: panorama.analise.recomendacaoConsolidada,
-        },
-      ]
-    })
+  const miniResumos: MiniResumoBeneficiario[] =
+    resumoRadar.intervencao.topOfensores.flatMap(
+      (ofensor): MiniResumoBeneficiario[] => {
+        const panorama = getBeneficiaryPanorama(eventos, ofensor.carteirinha, {
+          mes,
+        })
+        if (!panorama.encontrado) return []
+        const display = anon
+          ? ofensor.display
+          : panorama.nome || panorama.display
+        return [
+          {
+            display,
+            riscoFuturo: ofensor.riscoFuturo,
+            prioridadeNivel: ofensor.prioridadeNivel,
+            prioridadeRotulo: ofensor.prioridadeRotulo,
+            economia: ofensor.economia,
+            participacaoPct: ofensor.participacaoPct,
+            valorTotal: ofensor.valorTotal,
+            resumo: panorama.analise.recomendacaoConsolidada,
+          },
+        ]
+      },
+    )
 
   const [shield, clienteLogo] = await Promise.all([
     assetLocalDataUrl('brand/winners-shield.png', 'image/png'),

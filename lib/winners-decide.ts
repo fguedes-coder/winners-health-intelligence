@@ -14,7 +14,13 @@
 // ===========================================================================
 
 import type { EventoDetalhado } from '@/lib/queries'
-import { classificarEvento, mesCurto, formatCompetencia } from '@/lib/categorias'
+import {
+  classificarEvento,
+  ehSaudeMental,
+  mesCurto,
+  formatCompetencia,
+} from '@/lib/categorias'
+import { MIN_COMPETENCIAS_PROJECAO } from '@/lib/winners-decide-guardrails'
 import { resumirRadar, type ResumoRadar } from '@/lib/radar-agg'
 
 export type WinnersFiltros = {
@@ -449,7 +455,7 @@ function gerarInsights(
       const a = porComp.get(e.competencia) ?? { prontoSocorro: 0, internacoes: 0, saudeMental: 0 }
       if (cat === 'Pronto-Socorro') a.prontoSocorro++
       if (e.internacao) a.internacoes++
-      if (cat === 'Saúde Mental' || e.saudeMental) a.saudeMental++
+      if (ehSaudeMental(e)) a.saudeMental++
       porComp.set(e.competencia, a)
     }
     if (e.internacao) {
@@ -830,6 +836,10 @@ export type PayloadIA = {
   reinternacoes: number
   pronto_socorro: number
   crescimento_custo_pct: number
+  /** Competências distintas no recorte — base para admitir projeção. */
+  competencias_analisadas: number
+  /** false quando há menos de MIN_COMPETENCIAS_PROJECAO competências. */
+  serie_historica_suficiente: boolean
   tendencia_sinistralidade_projetada: number | null
   reajuste_estimado_pct: { min: number; max: number }
 }
@@ -859,6 +869,10 @@ export function montarPayloadIA(
   // Saúde Mental: custo por competência (tendência) e beneficiários monitorados.
   const smCustoPorComp = new Map<string, number>()
   const smBenef = new Set<string>()
+  // Eixo saúde mental (inclui internações psiquiátricas), alinhado ao KPI e à
+  // seção de Saúde Mental do relatório — não à partição por categoria.
+  let smOcorrencias = 0
+  let smCustoTotal = 0
   for (const e of filtrados) {
     const cat = classificarEvento({
       servicoPrincipal: e.servicoPrincipal,
@@ -874,8 +888,11 @@ export function montarPayloadIA(
     acc.benef.add(e.beneficiario)
     porCategoria.set(cat, acc)
     custoPorBenef.set(e.beneficiario, (custoPorBenef.get(e.beneficiario) ?? 0) + e.valorPago)
-    if (cat === 'Saúde Mental' || e.saudeMental) saudeMental++
-    if (cat === 'Saúde Mental') {
+    const eventoSaudeMental = ehSaudeMental(e)
+    if (eventoSaudeMental) {
+      saudeMental++
+      smOcorrencias++
+      smCustoTotal += e.valorPago
       smBenef.add(e.beneficiario)
       if (e.competencia) {
         smCustoPorComp.set(
@@ -924,23 +941,27 @@ export function montarPayloadIA(
   }
 
   // Bloco de Saúde Mental: participação no custo e tendência entre competências.
-  const smCat = porCategoria.get('Saúde Mental')
   const smComps = [...smCustoPorComp.keys()].sort()
   const smUlt = smComps.length ? smCustoPorComp.get(smComps[smComps.length - 1])! : undefined
   const smPen = smComps.length >= 2 ? smCustoPorComp.get(smComps[smComps.length - 2])! : undefined
   const saudeMentalBloco = {
-    utilizacoes: smCat?.ocorrencias ?? 0,
+    utilizacoes: smOcorrencias,
     beneficiarios: smBenef.size,
-    custo: Math.round(smCat?.custo ?? 0),
+    custo: Math.round(smCustoTotal),
     pct_custo:
-      custoTotalCategorias > 0 && smCat
-        ? Math.round((smCat.custo / custoTotalCategorias) * 1000) / 10
+      custoTotalCategorias > 0
+        ? Math.round((smCustoTotal / custoTotalCategorias) * 1000) / 10
         : 0,
     tendencia_pct:
       smUlt !== undefined && smPen !== undefined && smPen > 0
         ? Math.round(((smUlt - smPen) / smPen) * 1000) / 10
         : null,
   }
+
+  const competenciasAnalisadas = new Set(
+    filtrados.map((e) => e.competencia).filter(Boolean),
+  ).size
+  const serieSuficiente = competenciasAnalisadas >= MIN_COMPETENCIAS_PROJECAO
 
   const periodo =
     analise.periodo.inicio && analise.periodo.fim
@@ -987,10 +1008,18 @@ export function montarPayloadIA(
     reinternacoes,
     pronto_socorro: prontoSocorro,
     crescimento_custo_pct: analise.previsoes.custoAssistencial.tendenciaPct,
-    tendencia_sinistralidade_projetada: analise.previsoes.sinistralidade.disponivel
-      ? analise.previsoes.sinistralidade.cenarios.provavel
-      : null,
-    reajuste_estimado_pct: analise.previsoes.reajusteEstimado,
+    competencias_analisadas: competenciasAnalisadas,
+    serie_historica_suficiente: serieSuficiente,
+    // Projeção e faixa de reajuste só saem do payload com série mínima: com
+    // uma única competência não há tendência a projetar, e o número viraria
+    // afirmação de risco no relatório executivo.
+    tendencia_sinistralidade_projetada:
+      serieSuficiente && analise.previsoes.sinistralidade.disponivel
+        ? analise.previsoes.sinistralidade.cenarios.provavel
+        : null,
+    reajuste_estimado_pct: serieSuficiente
+      ? analise.previsoes.reajusteEstimado
+      : { min: 0, max: 0 },
   }
 }
 
@@ -1007,14 +1036,16 @@ export function gerarResumoMock(p: PayloadIA): string {
       : fatores.length === 1
         ? fatores[0]
         : `${fatores.slice(0, -1).join(', ')} e ${fatores[fatores.length - 1]}`
-  const tendencia =
-    p.crescimento_custo_pct > 5
+  const tendencia = !p.serie_historica_suficiente
+    ? 'série histórica insuficiente para projeção'
+    : p.crescimento_custo_pct > 5
       ? `tendência de alta (${p.crescimento_custo_pct > 0 ? '+' : ''}${p.crescimento_custo_pct}% projetados para o próximo ciclo)`
       : p.crescimento_custo_pct < -5
         ? `tendência de queda (${p.crescimento_custo_pct}% projetados)`
         : 'tendência estável de custo assistencial'
-  const reajuste =
-    p.reajuste_estimado_pct.max > 0
+  const reajuste = !p.serie_historica_suficiente
+    ? `Faixa de reajuste não estimada: série histórica insuficiente (${p.competencias_analisadas} competência(s) apurada(s); são necessárias ${MIN_COMPETENCIAS_PROJECAO}).`
+    : p.reajuste_estimado_pct.max > 0
       ? `A projeção indica possível pressão sobre o reajuste, em uma faixa estimada de ${p.reajuste_estimado_pct.min}% a ${p.reajuste_estimado_pct.max}%.`
       : 'Não há, no momento, pressão relevante de sinistralidade sobre o reajuste.'
 
@@ -1064,7 +1095,7 @@ A carteira de **${p.cliente}** (período ${p.periodo}) reúne **${p.vidas_analis
 A concentração de custo nos maiores ofensores e a presença de vidas em risco crítico elevam a probabilidade de continuidade de custos nos próximos ciclos.
 
 ## 4. Tendência provável
-Com base na série histórica, projeta-se ${tendencia}. ${p.tendencia_sinistralidade_projetada !== null ? `A sinistralidade provável projetada é de aproximadamente ${p.tendencia_sinistralidade_projetada}%.` : ''}
+${p.serie_historica_suficiente ? `Com base na série histórica, projeta-se ${tendencia}.` : `Não há projeção para este recorte: ${tendencia}. O período deve ser lido como fotografia, não como tendência.`} ${p.tendencia_sinistralidade_projetada !== null ? `A sinistralidade provável projetada é de aproximadamente ${p.tendencia_sinistralidade_projetada}%.` : ''}
 
 ## 5. Impacto financeiro
 O potencial impacto financeiro monitorado (vidas em alto/crítico) é de **${brl(p.impacto_financeiro_potencial)}**, sobre um custo total de ${brl(p.custo_total)}. ${linhaOfensorCusto}${linhaFrequencia}${linhaConcentracao}
@@ -1089,7 +1120,7 @@ export function gerarRespostaChatMock(pergunta: string, p: PayloadIA): string {
 - Tendência de custo projetada: **${p.crescimento_custo_pct > 0 ? '+' : ''}${p.crescimento_custo_pct}%**
 - Pronto-socorro: **${p.pronto_socorro}** · Internações: **${p.internacoes}** · Saúde mental: **${p.indicadores_saude_mental}**
 
-Sobre "${pergunta.trim()}": os indicadores acima apontam ${emRisco > 0 ? 'concentração de risco em um grupo de vidas que deve ser monitorado prioritariamente' : 'uma carteira sem concentração relevante de risco no momento'}. ${p.reajuste_estimado_pct.max > 0 ? `Há pressão estimada de reajuste entre ${p.reajuste_estimado_pct.min}% e ${p.reajuste_estimado_pct.max}%.` : 'Não há pressão relevante de reajuste no momento.'}
+Sobre "${pergunta.trim()}": os indicadores acima apontam ${emRisco > 0 ? 'concentração de risco em um grupo de vidas que deve ser monitorado prioritariamente' : 'uma carteira sem concentração relevante de risco no momento'}. ${!p.serie_historica_suficiente ? 'A faixa de reajuste não é estimada: série histórica insuficiente.' : p.reajuste_estimado_pct.max > 0 ? `Há pressão estimada de reajuste entre ${p.reajuste_estimado_pct.min}% e ${p.reajuste_estimado_pct.max}%.` : 'Não há pressão relevante de reajuste no momento.'}
 
  _Resposta determinística baseada nos dados da plataforma. Configure a variável OPENAI_API_KEY para respostas consultivas generativas. Não constitui diagnóstico médico._`
 }
