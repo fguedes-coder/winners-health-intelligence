@@ -40,6 +40,16 @@ const RED: RGB = [185, 28, 28] // P1 / risco crítico
 const ORANGE: RGB = [194, 65, 12] // P2 / risco alto
 const BLUE_XLT: RGB = [239, 246, 255] // fundo suave do bloco de intervenção
 
+// Acentos exclusivos da capa (fundo navy)
+const TEAL: RGB = [45, 212, 191] // destaque positivo (sinistralidade saudável)
+const TEAL_DIM: RGB = [32, 118, 106] // borda do cartão de sinistralidade
+const BLUE_TITLE: RGB = [64, 131, 246] // "Plano de Saúde" no título da capa
+const AMBER_CAPA: RGB = [251, 191, 36] // status de atenção sobre navy
+const RED_CAPA: RGB = [248, 113, 113] // status crítico sobre navy
+const NAVY_LINE: RGB = [40, 62, 108] // divisórias sobre navy
+const CAPA_MUTED: RGB = [150, 170, 205] // texto secundário sobre navy
+const CAPA_LABEL: RGB = [168, 184, 212] // rótulos de KPI sobre navy
+
 // Cores dos selos de prioridade (P1–P4).
 const PRIORIDADE_COR: Record<string, RGB> = {
   P1: RED,
@@ -217,6 +227,9 @@ class Relatorio {
   }
 
   // ---- capa institucional --------------------------------------------------
+  // Layout: fundo navy com motivos decorativos, emblema + wordmark, título,
+  // cartão do cliente + selo de sinistralidade lado a lado, régua de KPIs e
+  // rodapé com emissão/LGPD. Referência: capa aprovada em ago/2026.
   private capa() {
     const doc = this.doc
     // Página 1 já existe. Marca como capa (sem cabeçalho/rodapé).
@@ -230,97 +243,186 @@ class Relatorio {
     this.fill(BLUE)
     doc.rect(0, 0, PAGE_W, 6, 'F')
 
+    this.capaDecoracao()
+
     // Emblema (shield) centralizado
     const shield = this.input.assets.shield
-    let topY = 84
+    let topY = 44
     if (shield) {
       try {
         const props = doc.getImageProperties(shield)
-        const h = 96
+        const h = 62
         const w = (props.width / props.height) * h
         doc.addImage(shield, 'PNG', (PAGE_W - w) / 2, topY, w, h)
-        topY += h + 22
       } catch {
-        topY += 40
+        /* segue sem o emblema */
       }
-    } else {
-      topY += 40
     }
+    topY += 62 + 32
 
     // Wordmark textual (o logo horizontal é escuro; na capa navy usamos texto)
     this.ink(WHITE)
-    this.font('bold', 34)
+    this.font('bold', 27)
     doc.text('WINNERS', PAGE_W / 2, topY, { align: 'center' })
     this.ink(BLUE_LT)
-    this.font('bold', 13)
-    doc.text('HEALTH INTELLIGENCE', PAGE_W / 2, topY + 22, {
+    this.font('bold', 11)
+    doc.text('HEALTH INTELLIGENCE', PAGE_W / 2, topY + 19, {
       align: 'center',
       charSpace: 3,
     })
-    // Slogan com filetes laterais
-    this.font('normal', 8.5)
-    this.ink([150, 170, 205])
-    const slogan = 'DADOS QUE CUIDAM. INTELIGÊNCIA QUE GERA VALOR.'
-    doc.text(slogan, PAGE_W / 2, topY + 44, { align: 'center', charSpace: 1.5 })
+    this.font('normal', 7.5)
+    this.ink(CAPA_MUTED)
+    doc.text(
+      'DADOS QUE CUIDAM. INTELIGÊNCIA QUE GERA VALOR.',
+      PAGE_W / 2,
+      topY + 36,
+      { align: 'center', charSpace: 1.2 },
+    )
 
-    // Bloco de título do relatório
-    const titleY = 372
-    this.fill(BLUE)
-    doc.rect(MARGIN, titleY - 30, 44, 4, 'F')
-    this.ink(BLUE_LT)
-    this.font('bold', 12)
-    doc.text('RELATÓRIO EXECUTIVO', MARGIN, titleY, { charSpace: 2 })
+    // Bloco de título
+    this.ink(BLUE_TITLE)
+    this.font('bold', 11)
+    doc.text('RELATÓRIO EXECUTIVO', MARGIN, 216, { charSpace: 2 })
 
     this.ink(WHITE)
-    this.font('bold', 30)
-    doc.text('Sinistralidade &', MARGIN, titleY + 40)
-    doc.text('Utilização do', MARGIN, titleY + 76)
-    doc.text('Plano de Saúde', MARGIN, titleY + 112)
+    this.font('bold', 29)
+    doc.text('Sinistralidade &', MARGIN, 252)
+    doc.text('Utilização do', MARGIN, 288)
+    this.ink(BLUE_TITLE)
+    doc.text('Plano de Saúde', MARGIN, 324)
+
+    this.fill(BLUE_TITLE)
+    doc.rect(MARGIN, 340, 44, 3.5, 'F')
 
     this.ink([170, 186, 214])
-    this.font('normal', 13)
-    doc.text('Análise consolidada da carteira de saúde', MARGIN, titleY + 144)
+    this.font('normal', 12)
+    doc.text('Análise consolidada da carteira de saúde', MARGIN, 368)
 
-    // Cartão dinâmico do cliente
-    const cardY = titleY + 176
-    const cardH = 150
-    this.fill(NAVY_SOFT)
-    doc.roundedRect(MARGIN, cardY, USABLE_W, cardH, 10, 10, 'F')
-    this.stroke([40, 62, 108])
+    // Cartões lado a lado: cliente (esq.) + sinistralidade (dir.)
+    const cardY = 396
+    const cardH = 172
+    const sinCardW = 160
+    const gap = 16
+    const cliCardW = USABLE_W - sinCardW - gap
+    this.capaCartaoCliente(MARGIN, cardY, cliCardW, cardH)
+    this.capaCartaoSinistralidade(MARGIN + cliCardW + gap, cardY, sinCardW, cardH)
+
+    // Régua de KPIs
+    this.capaKpis(MARGIN, cardY + cardH + 16, USABLE_W, 80)
+
+    // Tagline em duas linhas (branca + teal) com selo de verificação
+    const l1 = 'INFORMAÇÃO PARA DECISÕES ESTRATÉGICAS —'
+    const l2 = 'GESTÃO INTELIGENTE PARA PROMOVER SAÚDE E SUSTENTABILIDADE.'
+    this.font('normal', 9)
+    const w1 = doc.getTextWidth(l1)
+    this.font('bold', 9)
+    const w2 = doc.getTextWidth(l2)
+    const blocoX = (PAGE_W - Math.max(w1, w2)) / 2
+    this.capaIconeCheckCircle(blocoX - 26, 708, 9, TEAL)
+    this.ink([186, 200, 224])
+    this.font('normal', 9)
+    doc.text(l1, blocoX, 704)
+    this.ink(TEAL)
+    this.font('bold', 9)
+    doc.text(l2, blocoX, 719)
+
+    // Rodapé da capa: emissão (data do relatório, não do navegador)
+    this.stroke(NAVY_LINE)
     doc.setLineWidth(0.8)
-    doc.roundedRect(MARGIN, cardY, USABLE_W, cardH, 10, 10, 'S')
+    doc.line(MARGIN, PAGE_H - 66, PAGE_W - MARGIN, PAGE_H - 66)
+    this.capaIconeCalendario(MARGIN, PAGE_H - 50, 9, CAPA_MUTED)
+    this.ink(CAPA_MUTED)
+    this.font('normal', 8.5)
+    doc.text(`Emitido em ${this.dataEmissao()}`, MARGIN + 16, PAGE_H - 42)
+    if (this.anonimizado) {
+      const rotulo = 'RELATÓRIO ANONIMIZADO — LGPD'
+      this.font('bold', 8.5)
+      const wR = doc.getTextWidth(rotulo)
+      this.capaIconeCadeado(PAGE_W - MARGIN - wR - 16, PAGE_H - 50, CAPA_MUTED)
+      this.ink(CAPA_MUTED)
+      doc.text(rotulo, PAGE_W - MARGIN, PAGE_H - 42, { align: 'right' })
+    }
+  }
 
-    // Coluna esquerda: rótulo + logo do cliente
-    const padX = MARGIN + 22
+  /** Motivos decorativos da capa: ondas à esquerda e gráfico à direita. */
+  private capaDecoracao() {
+    const doc = this.doc
+    // Ondas suaves no canto superior esquerdo
+    this.stroke([26, 50, 98])
+    doc.setLineWidth(1.1)
+    for (let i = 0; i < 3; i++) {
+      doc.lines(
+        [[90, -34, 190, 16, 270, -44]],
+        -12,
+        76 + i * 26,
+        [1, 1],
+        'S',
+      )
+    }
+    // Barras + linha de tendência no canto superior direito
+    const alturas = [46, 84, 60, 108, 138]
+    const baseY = 306
+    this.fill([19, 42, 88])
+    alturas.forEach((h, i) => {
+      doc.rect(408 + i * 30, baseY - h, 17, h, 'F')
+    })
+    const pontos: [number, number][] = [
+      [404, 246],
+      [438, 256],
+      [468, 214],
+      [498, 226],
+      [528, 178],
+      [560, 152],
+    ]
+    this.stroke([43, 96, 178])
+    doc.setLineWidth(1.4)
+    for (let i = 1; i < pontos.length; i++) {
+      doc.line(pontos[i - 1][0], pontos[i - 1][1], pontos[i][0], pontos[i][1])
+    }
+    this.fill([43, 96, 178])
+    for (const [x, y] of pontos) doc.circle(x, y, 2.6, 'F')
+  }
+
+  /** Cartão do cliente: logo, nome e linhas de informação com ícones. */
+  private capaCartaoCliente(x: number, y: number, w: number, h: number) {
+    const doc = this.doc
+    this.fill(NAVY_SOFT)
+    doc.roundedRect(x, y, w, h, 10, 10, 'F')
+    this.stroke(NAVY_LINE)
+    doc.setLineWidth(0.8)
+    doc.roundedRect(x, y, w, h, 10, 10, 'S')
+
+    const padX = x + 18
     this.ink(BLUE_LT)
-    this.font('bold', 10)
-    doc.text('CLIENTE', padX, cardY + 30, { charSpace: 1.5 })
+    this.font('bold', 9)
+    doc.text('CLIENTE', padX, y + 26, { charSpace: 1.5 })
 
-    const logoBoxY = cardY + 44
-    const logoBoxW = 150
-    const logoBoxH = 82
+    // Logo do cliente em caixa branca
+    const logoBoxY = y + 44
+    const logoBoxW = 118
+    const logoBoxH = 100
     const clienteLogo = this.input.assets.clienteLogo
     if (clienteLogo) {
       try {
         this.fill(WHITE)
-        doc.roundedRect(padX, logoBoxY, logoBoxW, logoBoxH, 6, 6, 'F')
+        doc.roundedRect(padX, logoBoxY, logoBoxW, logoBoxH, 8, 8, 'F')
         const props = doc.getImageProperties(clienteLogo)
-        const maxW = logoBoxW - 20
-        const maxH = logoBoxH - 20
-        let w = maxW
-        let h = (props.height / props.width) * w
-        if (h > maxH) {
-          h = maxH
-          w = (props.width / props.height) * h
+        const maxW = logoBoxW - 18
+        const maxH = logoBoxH - 18
+        let lw = maxW
+        let lh = (props.height / props.width) * lw
+        if (lh > maxH) {
+          lh = maxH
+          lw = (props.width / props.height) * lh
         }
         const fmt = clienteLogo.includes('image/png') ? 'PNG' : 'JPEG'
         doc.addImage(
           clienteLogo,
           fmt,
-          padX + (logoBoxW - w) / 2,
-          logoBoxY + (logoBoxH - h) / 2,
-          w,
-          h,
+          padX + (logoBoxW - lw) / 2,
+          logoBoxY + (logoBoxH - lh) / 2,
+          lw,
+          lh,
         )
       } catch {
         this.drawLogoFallback(padX, logoBoxY, logoBoxW, logoBoxH)
@@ -330,60 +432,231 @@ class Relatorio {
     }
 
     // Divisória vertical
-    const divX = padX + logoBoxW + 30
-    this.stroke([40, 62, 108])
+    const divX = padX + logoBoxW + 18
+    this.stroke(NAVY_LINE)
     doc.setLineWidth(1)
-    doc.line(divX, cardY + 24, divX, cardY + cardH - 24)
+    doc.line(divX, y + 22, divX, y + h - 22)
 
-    // Coluna direita: nome + info
-    const infoX = divX + 24
+    // Nome + linhas de informação
+    const infoX = divX + 16
     this.ink(WHITE)
-    this.font('bold', 18)
-    doc.text(this.clienteNome, infoX, cardY + 34, {
-      maxWidth: MARGIN + USABLE_W - infoX - 20,
+    this.font('bold', 15)
+    doc.text(this.clienteNome, infoX, y + 36, {
+      maxWidth: x + w - infoX - 14,
     })
 
     const k = this.input.data.kpis
     const vidas = (k.vidasAtivas ?? k.vidasComUtilizacao ?? 0).toLocaleString(
       'pt-BR',
     )
-    const infos: [string, string][] = [
-      ['PERÍODO ANALISADO', this.periodoLabel],
-      ['VIDAS ABRANGIDAS', vidas],
-      ['VALOR UTILIZADO NO PERÍODO', formatBRL(k.valorUtilizado)],
+    const infos: {
+      label: string
+      valor: string
+      icone: 'calendario' | 'pessoas' | 'cifrao'
+    }[] = [
+      { label: 'PERÍODO ANALISADO', valor: this.periodoLabel, icone: 'calendario' },
+      { label: 'VIDAS ATIVAS', valor: vidas, icone: 'pessoas' },
+      {
+        label: 'VALOR UTILIZADO NO PERÍODO',
+        valor: formatBRL(k.valorUtilizado),
+        icone: 'cifrao',
+      },
     ]
-    let iy = cardY + 58
-    for (const [label, valor] of infos) {
+    let iy = y + 70
+    for (const info of infos) {
+      if (info.icone === 'calendario') {
+        this.capaIconeCalendario(infoX, iy - 6, 10, BLUE_LT)
+      } else if (info.icone === 'pessoas') {
+        this.capaIconePessoa(infoX + 1, iy - 6, BLUE_LT)
+      } else {
+        this.capaIconeCifrao(infoX + 5, iy - 1, BLUE_LT)
+      }
       this.ink([140, 160, 195])
-      this.font('normal', 8)
-      doc.text(label, infoX, iy, { charSpace: 0.8 })
+      this.font('normal', 7.5)
+      this.doc.text(info.label, infoX + 20, iy - 3, { charSpace: 0.6 })
       this.ink(WHITE)
-      this.font('bold', 12)
-      doc.text(valor, infoX, iy + 15)
+      this.font('bold', 11)
+      this.doc.text(info.valor, infoX + 20, iy + 10)
       iy += 32
     }
+  }
 
-    // Rodapé da capa: emissão (data do relatório, não do navegador)
-    this.stroke([40, 62, 108])
+  /** Selo de sinistralidade com status qualitativo. */
+  private capaCartaoSinistralidade(x: number, y: number, w: number, h: number) {
+    const doc = this.doc
+    const sin = this.input.data.evolucaoSinistralidade.at(-1)?.valor ?? null
+
+    const status =
+      sin === null
+        ? { cor: CAPA_MUTED, linhas: ['SEM FATURA', 'NO PERÍODO'] }
+        : sin < 75
+          ? { cor: TEAL, linhas: ['EM PATAMAR', 'SAUDÁVEL'] }
+          : sin < 100
+            ? { cor: AMBER_CAPA, linhas: ['EM ZONA DE', 'ATENÇÃO'] }
+            : { cor: RED_CAPA, linhas: ['ACIMA DO', 'EQUILÍBRIO'] }
+
+    this.fill(NAVY_SOFT)
+    doc.roundedRect(x, y, w, h, 10, 10, 'F')
+    this.stroke(sin !== null && sin < 75 ? TEAL_DIM : NAVY_LINE)
+    doc.setLineWidth(1)
+    doc.roundedRect(x, y, w, h, 10, 10, 'S')
+
+    const cx = x + w / 2
+    this.capaIconeCheckCircle(cx, y + 34, 15, status.cor)
+
+    this.ink([210, 222, 240])
+    this.font('bold', 9)
+    doc.text('SINISTRALIDADE', cx, y + 66, { align: 'center', charSpace: 1 })
+
+    this.ink(status.cor)
+    this.font('bold', 25)
+    doc.text(sin === null ? '—' : pct(sin), cx, y + 96, { align: 'center' })
+
+    this.stroke(NAVY_LINE)
+    doc.setLineWidth(0.9)
+    doc.line(cx - 30, y + 110, cx + 30, y + 110)
+
+    this.ink(status.cor)
+    this.font('bold', 9.5)
+    doc.text(status.linhas[0], cx, y + 130, { align: 'center', charSpace: 0.5 })
+    doc.text(status.linhas[1], cx, y + 143, { align: 'center', charSpace: 0.5 })
+  }
+
+  /** Régua de 4 KPIs da capa (eventos, vidas, internações, saúde mental). */
+  private capaKpis(x: number, y: number, w: number, h: number) {
+    const doc = this.doc
+    this.fill(NAVY_SOFT)
+    doc.roundedRect(x, y, w, h, 10, 10, 'F')
+    this.stroke(NAVY_LINE)
     doc.setLineWidth(0.8)
-    doc.line(MARGIN, PAGE_H - 78, PAGE_W - MARGIN, PAGE_H - 78)
-    this.ink([150, 170, 205])
-    this.font('normal', 9)
-    doc.text(
-      'Informação para decisões estratégicas — gestão inteligente para promover saúde e sustentabilidade.',
-      MARGIN,
-      PAGE_H - 58,
-    )
-    this.ink([120, 140, 175])
-    this.font('normal', 8.5)
-    doc.text(`Emitido em ${this.dataEmissao()}`, MARGIN, PAGE_H - 42)
-    if (this.anonimizado) {
+    doc.roundedRect(x, y, w, h, 10, 10, 'S')
+
+    const k = this.input.data.kpis
+    const cel = w / 4
+    const kpis: {
+      valor: number
+      linhas: string[]
+      icone: 'barras' | 'pessoa' | 'leito' | 'coracao'
+    }[] = [
+      { valor: k.eventos, linhas: ['EVENTOS'], icone: 'barras' },
+      {
+        valor: k.vidasComUtilizacao,
+        linhas: ['VIDAS COM', 'UTILIZAÇÃO'],
+        icone: 'pessoa',
+      },
+      { valor: k.internacoes, linhas: ['INTERNAÇÕES'], icone: 'leito' },
+      {
+        valor: k.saudeMental,
+        linhas: ['EVENTOS DE', 'SAÚDE MENTAL'],
+        icone: 'coracao',
+      },
+    ]
+
+    kpis.forEach((kpi, i) => {
+      const x0 = x + i * cel
+      if (i > 0) {
+        this.stroke(NAVY_LINE)
+        doc.setLineWidth(0.8)
+        doc.line(x0, y + 16, x0, y + h - 16)
+      }
+      const icx = x0 + 26
+      const icy = y + h / 2
+      this.stroke(BLUE_LT)
+      doc.setLineWidth(1.3)
+      doc.circle(icx, icy, 13, 'S')
+      if (kpi.icone === 'barras') this.capaIconeBarras(icx, icy, BLUE_LT)
+      else if (kpi.icone === 'pessoa') this.capaIconePessoa(icx - 4, icy - 6, BLUE_LT)
+      else if (kpi.icone === 'leito') this.capaIconeLeito(icx, icy, BLUE_LT)
+      else this.capaIconeCoracao(icx, icy, BLUE_LT)
+
       this.ink(BLUE_LT)
-      this.font('bold', 8.5)
-      doc.text('RELATÓRIO ANONIMIZADO — LGPD', PAGE_W - MARGIN, PAGE_H - 42, {
-        align: 'right',
+      this.font('bold', 19)
+      doc.text(kpi.valor.toLocaleString('pt-BR'), x0 + 46, y + h / 2 + 2)
+      this.ink(CAPA_LABEL)
+      this.font('bold', 6.3)
+      kpi.linhas.forEach((linha, li) => {
+        doc.text(linha, x0 + 46, y + h / 2 + 13 + li * 8, { charSpace: 0.4 })
       })
-    }
+    })
+  }
+
+  // ---- ícones vetoriais da capa -------------------------------------------
+  private capaIconeCheckCircle(cx: number, cy: number, r: number, cor: RGB) {
+    const doc = this.doc
+    this.stroke(cor)
+    doc.setLineWidth(1.6)
+    doc.circle(cx, cy, r, 'S')
+    const s = r / 9
+    doc.setLineWidth(1.7)
+    doc.line(cx - 4 * s, cy + 0.5 * s, cx - 1.2 * s, cy + 3.5 * s)
+    doc.line(cx - 1.2 * s, cy + 3.5 * s, cx + 4.5 * s, cy - 3 * s)
+  }
+
+  private capaIconeCalendario(x: number, y: number, w: number, cor: RGB) {
+    const doc = this.doc
+    this.stroke(cor)
+    doc.setLineWidth(1)
+    doc.roundedRect(x, y, w, w * 0.9, 1.5, 1.5, 'S')
+    doc.line(x, y + 3, x + w, y + 3)
+    doc.line(x + 2.5, y - 1.5, x + 2.5, y + 1)
+    doc.line(x + w - 2.5, y - 1.5, x + w - 2.5, y + 1)
+  }
+
+  private capaIconePessoa(x: number, y: number, cor: RGB) {
+    const doc = this.doc
+    this.stroke(cor)
+    doc.setLineWidth(1.1)
+    doc.circle(x + 4, y + 2.5, 2.4, 'S')
+    doc.lines(
+      [[0.5, -4, 7.5, -4, 8, 0]],
+      x,
+      y + 10.5,
+      [1, 1],
+      'S',
+    )
+  }
+
+  private capaIconeCifrao(x: number, y: number, cor: RGB) {
+    this.ink(cor)
+    this.font('bold', 11)
+    this.doc.text('$', x, y, { align: 'center' })
+  }
+
+  private capaIconeBarras(cx: number, cy: number, cor: RGB) {
+    const doc = this.doc
+    this.fill(cor)
+    doc.rect(cx - 5.5, cy + 1, 2.6, 4.5, 'F')
+    doc.rect(cx - 1.3, cy - 2, 2.6, 7.5, 'F')
+    doc.rect(cx + 2.9, cy - 5, 2.6, 10.5, 'F')
+  }
+
+  private capaIconeLeito(cx: number, cy: number, cor: RGB) {
+    const doc = this.doc
+    this.stroke(cor)
+    doc.setLineWidth(1.1)
+    // Estrutura da cama + travesseiro + pernas
+    doc.line(cx - 6.5, cy - 4, cx - 6.5, cy + 4.5)
+    doc.line(cx - 6.5, cy + 1.5, cx + 6.5, cy + 1.5)
+    doc.line(cx + 6.5, cy - 1, cx + 6.5, cy + 4.5)
+    doc.roundedRect(cx - 5, cy - 2.5, 3.4, 2.6, 0.8, 0.8, 'S')
+    doc.line(cx - 1, cy - 1, cx + 6.5, cy - 1)
+  }
+
+  private capaIconeCoracao(cx: number, cy: number, cor: RGB) {
+    const doc = this.doc
+    this.fill(cor)
+    doc.circle(cx - 2, cy - 1.6, 2.3, 'F')
+    doc.circle(cx + 2, cy - 1.6, 2.3, 'F')
+    doc.triangle(cx - 4.2, cy - 0.6, cx + 4.2, cy - 0.6, cx, cy + 4.6, 'F')
+  }
+
+  private capaIconeCadeado(x: number, y: number, cor: RGB) {
+    const doc = this.doc
+    this.stroke(cor)
+    doc.setLineWidth(1)
+    // Corpo + alça
+    doc.roundedRect(x, y + 3, 8, 6, 1, 1, 'S')
+    doc.lines([[0, -3.5, 4, -3.5, 4, 0]], x + 2, y + 3, [1, 1], 'S')
   }
 
   private drawLogoFallback(x: number, y: number, w: number, h: number) {
