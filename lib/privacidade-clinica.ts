@@ -187,9 +187,11 @@ export function aplicarKAnonimato<T extends LinhaAgregada>(
       cur.valor += linha.valor
       cur.eventos += linha.eventos
       if (cur.beneficiarios !== undefined && linha.beneficiarios !== undefined) {
-        // Soma conservadora: sem os conjuntos originais, assume-se que as
-        // descrições fundidas atingiram beneficiários distintos.
-        cur.beneficiarios += linha.beneficiarios
+        // MAIOR, nunca a soma: sem os conjuntos originais, o único limite
+        // inferior seguro para os distintos da união é o maior dos valores.
+        // Somar inflaria a contagem e faria um grupo de 2 pessoas atravessar
+        // o limiar de k só por aparecer em várias descrições.
+        cur.beneficiarios = Math.max(cur.beneficiarios, linha.beneficiarios)
       }
     } else {
       porRotulo.set(nome, { ...linha, nome })
@@ -216,7 +218,11 @@ export function aplicarKAnonimato<T extends LinhaAgregada>(
     }
     visiveis.push(linha)
   }
-  const resultado = visiveis.sort((a, b) => b.valor - a.valor)
+  // O balde entra na ordenação junto com as demais linhas: quando muita coisa
+  // é suprimida ele vira o maior bloco da composição, e empurrá-lo para o fim
+  // faria um corte por "top N" descartar justamente o que mais pesa.
+  const resultado = [...visiveis]
   if (balde.valor > 0 || balde.eventos > 0) resultado.push(balde)
+  resultado.sort((a, b) => b.valor - a.valor)
   return { linhas: resultado, suprimidas, valorSuprimido: balde.valor }
 }
