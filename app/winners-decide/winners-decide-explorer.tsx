@@ -216,7 +216,7 @@ export function WinnersDecideExplorer({
     // período de vários meses — num export de Jan a Jul saía 25,5% (julho) onde
     // o acumulado era 73,6%.
     linhas.push(
-      `- Sinistralidade do período: ${analise.cards.sinistralidadePeriodo !== null ? analise.cards.sinistralidadePeriodo + '%' : 'não disponível'}`,
+      `- Sinistralidade consolidada: ${analise.cards.sinistralidadePeriodo !== null ? analise.cards.sinistralidadePeriodo + '%' : 'não disponível'}`,
     )
     linhas.push(
       `- Sinistralidade da última competência${per.fim ? ` (${formatCompetencia(per.fim)})` : ''}: ${analise.cards.sinistralidadeAtual !== null ? analise.cards.sinistralidadeAtual + '%' : 'não disponível'}`,

@@ -1064,7 +1064,7 @@ export function montarPayloadIA(
 export function gerarResumoMock(p: PayloadIA): string {
   const sinist =
     p.sinistralidade_periodo !== null
-      ? `${p.sinistralidade_periodo}% no período`
+      ? `${p.sinistralidade_periodo}% consolidada no período`
       : 'não disponível (fatura não cadastrada no período)'
   const emRisco = p.vidas_risco_alto + p.vidas_risco_critico
   const fatores = p.principais_fatores_risco.slice(0, 3).map((f) => f.fator.toLowerCase())
@@ -1154,7 +1154,7 @@ export function gerarRespostaChatMock(pergunta: string, p: PayloadIA): string {
   return `Com base nos dados disponíveis da carteira **${p.cliente}** (${p.periodo}):
 
 - Vidas analisadas: **${p.vidas_analisadas}** · em alto/crítico risco: **${emRisco}**
-- Sinistralidade do período: **${p.sinistralidade_periodo !== null ? p.sinistralidade_periodo + '%' : 'não disponível'}**${p.sinistralidade_ultima_competencia !== null && p.sinistralidade_ultima_competencia !== p.sinistralidade_periodo ? ` (última competência: ${p.sinistralidade_ultima_competencia}%)` : ''}
+- Sinistralidade consolidada: **${p.sinistralidade_periodo !== null ? p.sinistralidade_periodo + '%' : 'não disponível'}**${p.sinistralidade_ultima_competencia !== null && p.sinistralidade_ultima_competencia !== p.sinistralidade_periodo ? ` (última competência: ${p.sinistralidade_ultima_competencia}%)` : ''}
 - Tendência de custo: **${!p.serie_historica_suficiente ? 'série histórica insuficiente para projeção' : `${p.crescimento_custo_pct > 0 ? '+' : ''}${p.crescimento_custo_pct}% projetados`}**
 - Pronto-socorro: **${p.pronto_socorro}** · Internações: **${p.internacoes}** · Saúde mental: **${p.indicadores_saude_mental}**
 
