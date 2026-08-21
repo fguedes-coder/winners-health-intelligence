@@ -57,7 +57,14 @@ export type Prioridade = 'alta' | 'media' | 'baixa'
 
 export type WinnersCards = {
   vidasAnalisadas: number
+  /** Sinistralidade da ÚLTIMA competência da série — não do período inteiro. */
   sinistralidadeAtual: number | null
+  /**
+   * Sinistralidade do período analisado: soma do custo dividida pela soma da
+   * fatura das competências com fatura cadastrada. É este o número que responde
+   * "como foi o recorte", e não o último ponto da série.
+   */
+  sinistralidadePeriodo: number | null
   vidasRiscoCritico: number
   impactoFinanceiro: number
   tendenciaProjetada: number // variação % projetada de custo (próximo ciclo)
@@ -255,6 +262,24 @@ export function analisarCarteira(
     ? serieSinistralidade[serieSinistralidade.length - 1].valor
     : null
 
+  // Agregado do período: custo acumulado sobre fatura acumulada das competências
+  // com fatura. Num recorte de vários meses, o último ponto da série pode ser
+  // muitas vezes menor que o acumulado (Jan–Jul/2026: 25,5% contra 73,6%), e
+  // apresentá-lo como indicador do período engana quem lê.
+  const compsComFatura = serieSinistralidade.map((sp) => sp.competencia)
+  const custoComFatura = compsComFatura.reduce(
+    (soma, c) => soma + (custoPorComp.get(c) ?? 0),
+    0,
+  )
+  const faturaAcumulada = compsComFatura.reduce(
+    (soma, c) => soma + (faturaPorCompetencia[c] ?? 0),
+    0,
+  )
+  const sinistralidadePeriodo =
+    faturaAcumulada > 0
+      ? Number(((custoComFatura / faturaAcumulada) * 100).toFixed(1))
+      : null
+
   // ---- Projeções por tendência (regressão linear) -------------------------
   const ultimaComp = competencias[competencias.length - 1] ?? ''
   const futuras = ultimaComp ? proximasCompetencias(ultimaComp, 3) : []
@@ -327,6 +352,7 @@ export function analisarCarteira(
   const cards: WinnersCards = {
     vidasAnalisadas: resumo.total,
     sinistralidadeAtual,
+    sinistralidadePeriodo,
     vidasRiscoCritico: resumo.contagem.critico,
     impactoFinanceiro: resumo.impactoFinanceiro,
     tendenciaProjetada: tendenciaCustoPct,
@@ -794,7 +820,15 @@ export type PayloadIA = {
   cliente: string
   periodo: string
   vidas_analisadas: number
-  sinistralidade: number | null
+  /**
+   * Agregado do recorte (custo acumulado / fatura acumulada). Enviado com nome
+   * explícito porque o campo genérico "sinistralidade" carregava o último ponto
+   * da série: numa análise de Jan a Jul o modelo lia 25,5% (só julho) achando
+   * que era o período, cujo valor real era 73,6%.
+   */
+  sinistralidade_periodo: number | null
+  /** Último ponto da série; só significa algo ao lado do agregado. */
+  sinistralidade_ultima_competencia: number | null
   utilizacao_total: number
   custo_total: number
   vidas_risco_baixo: number
@@ -974,7 +1008,8 @@ export function montarPayloadIA(
     cliente: filtros.cliente || 'Carteira consolidada (todos os clientes)',
     periodo,
     vidas_analisadas: resumoAnon.total,
-    sinistralidade: analise.cards.sinistralidadeAtual,
+    sinistralidade_periodo: analise.cards.sinistralidadePeriodo,
+    sinistralidade_ultima_competencia: analise.cards.sinistralidadeAtual,
     utilizacao_total: filtrados.length,
     custo_total: Math.round(resumoAnon.valorTotalCarteira),
     vidas_risco_baixo: resumoAnon.contagem.baixo,
@@ -1027,7 +1062,10 @@ export function montarPayloadIA(
 // Análise executiva determinística (fallback quando não há OPENAI_API_KEY).
 // ---------------------------------------------------------------------------
 export function gerarResumoMock(p: PayloadIA): string {
-  const sinist = p.sinistralidade !== null ? `${p.sinistralidade}%` : 'não disponível (fatura não cadastrada no período)'
+  const sinist =
+    p.sinistralidade_periodo !== null
+      ? `${p.sinistralidade_periodo}% consolidada no período`
+      : 'não disponível (fatura não cadastrada no período)'
   const emRisco = p.vidas_risco_alto + p.vidas_risco_critico
   const fatores = p.principais_fatores_risco.slice(0, 3).map((f) => f.fator.toLowerCase())
   const listaFatores =
@@ -1116,7 +1154,7 @@ export function gerarRespostaChatMock(pergunta: string, p: PayloadIA): string {
   return `Com base nos dados disponíveis da carteira **${p.cliente}** (${p.periodo}):
 
 - Vidas analisadas: **${p.vidas_analisadas}** · em alto/crítico risco: **${emRisco}**
-- Sinistralidade atual: **${p.sinistralidade !== null ? p.sinistralidade + '%' : 'não disponível'}**
+- Sinistralidade consolidada: **${p.sinistralidade_periodo !== null ? p.sinistralidade_periodo + '%' : 'não disponível'}**${p.sinistralidade_ultima_competencia !== null && p.sinistralidade_ultima_competencia !== p.sinistralidade_periodo ? ` (última competência: ${p.sinistralidade_ultima_competencia}%)` : ''}
 - Tendência de custo: **${!p.serie_historica_suficiente ? 'série histórica insuficiente para projeção' : `${p.crescimento_custo_pct > 0 ? '+' : ''}${p.crescimento_custo_pct}% projetados`}**
 - Pronto-socorro: **${p.pronto_socorro}** · Internações: **${p.internacoes}** · Saúde mental: **${p.indicadores_saude_mental}**
 

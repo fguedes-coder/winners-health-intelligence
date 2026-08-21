@@ -211,8 +211,15 @@ export function WinnersDecideExplorer({
     linhas.push('')
     linhas.push('## Indicadores')
     linhas.push(`- Vidas analisadas: ${analise.cards.vidasAnalisadas}`)
+    // Dois números distintos, cada um com o rótulo que lhe cabe. O export
+    // trazia só o último ponto da série sob o rótulo "atual", logo abaixo de um
+    // período de vários meses — num export de Jan a Jul saía 25,5% (julho) onde
+    // o acumulado era 73,6%.
     linhas.push(
-      `- Sinistralidade atual: ${analise.cards.sinistralidadeAtual !== null ? analise.cards.sinistralidadeAtual + '%' : 'não disponível'}`,
+      `- Sinistralidade consolidada: ${analise.cards.sinistralidadePeriodo !== null ? analise.cards.sinistralidadePeriodo + '%' : 'não disponível'}`,
+    )
+    linhas.push(
+      `- Sinistralidade da última competência${per.fim ? ` (${formatCompetencia(per.fim)})` : ''}: ${analise.cards.sinistralidadeAtual !== null ? analise.cards.sinistralidadeAtual + '%' : 'não disponível'}`,
     )
     linhas.push(`- Vidas em risco crítico: ${analise.cards.vidasRiscoCritico}`)
     linhas.push(`- Impacto financeiro potencial: ${formatBRL(analise.cards.impactoFinanceiro)}`)
