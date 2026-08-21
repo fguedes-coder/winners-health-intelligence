@@ -1117,7 +1117,7 @@ export function gerarRespostaChatMock(pergunta: string, p: PayloadIA): string {
 
 - Vidas analisadas: **${p.vidas_analisadas}** · em alto/crítico risco: **${emRisco}**
 - Sinistralidade atual: **${p.sinistralidade !== null ? p.sinistralidade + '%' : 'não disponível'}**
-- Tendência de custo projetada: **${p.crescimento_custo_pct > 0 ? '+' : ''}${p.crescimento_custo_pct}%**
+- Tendência de custo: **${!p.serie_historica_suficiente ? 'série histórica insuficiente para projeção' : `${p.crescimento_custo_pct > 0 ? '+' : ''}${p.crescimento_custo_pct}% projetados`}**
 - Pronto-socorro: **${p.pronto_socorro}** · Internações: **${p.internacoes}** · Saúde mental: **${p.indicadores_saude_mental}**
 
 Sobre "${pergunta.trim()}": os indicadores acima apontam ${emRisco > 0 ? 'concentração de risco em um grupo de vidas que deve ser monitorado prioritariamente' : 'uma carteira sem concentração relevante de risco no momento'}. ${!p.serie_historica_suficiente ? 'A faixa de reajuste não é estimada: série histórica insuficiente.' : p.reajuste_estimado_pct.max > 0 ? `Há pressão estimada de reajuste entre ${p.reajuste_estimado_pct.min}% e ${p.reajuste_estimado_pct.max}%.` : 'Não há pressão relevante de reajuste no momento.'}

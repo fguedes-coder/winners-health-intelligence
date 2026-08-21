@@ -142,11 +142,16 @@ export function WinnersDecideExplorer({
         body: JSON.stringify({ modo: 'resumo', filtros }),
       })
       const data = await res.json()
+      // Texto vazio com fonte 'suprimida' é resposta válida, não falha: a
+      // análise foi reprovada pelos guardrails e não deve ser publicada. O
+      // texto fica vazio de propósito (o aviso explica o motivo) para que
+      // nem a tela nem o relatório exportado repitam números divergentes.
       setResumoIA(data.texto ?? 'Não foi possível gerar a análise.')
       setResumoFonte(data.fonte ?? null)
       setResumoAviso(data.aviso ?? null)
     } catch {
       setResumoIA('Ocorreu um erro ao gerar a análise. Tente novamente.')
+      setResumoFonte(null)
     } finally {
       setCarregandoResumo(false)
     }
@@ -165,11 +170,17 @@ export function WinnersDecideExplorer({
         body: JSON.stringify({ modo: 'chat', filtros, pergunta: q }),
       })
       const data = await res.json()
+      // Mesma regra do resumo: resposta suprimida não vira mensagem vazia —
+      // o motivo da supressão ocupa o lugar do texto reprovado.
       setMensagens((m) => [
         ...m,
         {
           role: 'assistant',
-          content: data.texto ?? 'Não foi possível responder.',
+          content:
+            data.fonte === 'suprimida'
+              ? (data.aviso ??
+                'A resposta foi suprimida por não conferir com os números apurados neste recorte.')
+              : data.texto || 'Não foi possível responder.',
           fonte: data.fonte ?? null,
         },
       ])
@@ -568,6 +579,7 @@ function AbaResumo({
   carregando: boolean
   onGerar: () => void
 }) {
+  const suprimida = fonte === 'suprimida'
   return (
     <Card>
       <CardHeader className="flex-row items-center justify-between gap-3">
@@ -598,12 +610,30 @@ function AbaResumo({
       </CardHeader>
       <CardContent>
         {aviso && (
-          <div className="mb-4 flex items-start gap-2 rounded-lg border border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+          <div
+            className={`mb-4 flex items-start gap-2 rounded-lg border px-3 py-2 text-xs ${
+              suprimida
+                ? 'border-destructive/40 bg-destructive/10 text-destructive'
+                : 'border-border bg-muted/40 text-muted-foreground'
+            }`}
+          >
             <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
             {aviso}
           </div>
         )}
-        {!texto && !carregando && (
+        {suprimida && !carregando && (
+          <div className="flex flex-col items-center justify-center gap-3 py-12 text-center">
+            <div className="flex size-12 items-center justify-center rounded-2xl bg-destructive/15 text-destructive">
+              <ShieldAlert className="size-6" />
+            </div>
+            <p className="max-w-md text-sm text-muted-foreground text-pretty">
+              A análise não foi publicada porque não conferiu com os números
+              apurados neste recorte. Os indicadores das demais abas seguem
+              válidos — vêm do cálculo determinístico, não do texto gerado.
+            </p>
+          </div>
+        )}
+        {!texto && !suprimida && !carregando && (
           <div className="flex flex-col items-center justify-center gap-3 py-12 text-center">
             <div className="flex size-12 items-center justify-center rounded-2xl bg-primary/15 text-primary">
               <Bot className="size-6" />
@@ -1033,21 +1063,32 @@ function Campo({ label, children }: { label: string; children: React.ReactNode }
 // determinística (fallback). Deixa claro para o usuário como o texto foi gerado.
 function FonteBadge({ fonte }: { fonte: string | null }) {
   const ia = fonte === 'ia'
+  const suprimida = fonte === 'suprimida'
   return (
     <span
       className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium ${
-        ia
-          ? 'bg-primary/15 text-primary'
-          : 'bg-muted text-muted-foreground'
+        suprimida
+          ? 'bg-destructive/15 text-destructive'
+          : ia
+            ? 'bg-primary/15 text-primary'
+            : 'bg-muted text-muted-foreground'
       }`}
       title={
-        ia
-          ? 'Texto gerado por modelo de IA a partir dos dados anonimizados da carteira.'
-          : 'Análise determinística calculada localmente a partir dos mesmos dados. Conecte um provedor de IA para respostas generativas.'
+        suprimida
+          ? 'A análise gerada não conferiu com os números apurados no recorte e foi suprimida pela validação automática.'
+          : ia
+            ? 'Texto gerado por modelo de IA a partir dos dados anonimizados da carteira.'
+            : 'Análise determinística calculada localmente a partir dos mesmos dados. Conecte um provedor de IA para respostas generativas.'
       }
     >
-      {ia ? <Sparkles className="size-3" /> : <Cpu className="size-3" />}
-      {ia ? 'Gerado por IA' : 'Análise interna'}
+      {suprimida ? (
+        <ShieldAlert className="size-3" />
+      ) : ia ? (
+        <Sparkles className="size-3" />
+      ) : (
+        <Cpu className="size-3" />
+      )}
+      {suprimida ? 'Análise suprimida' : ia ? 'Gerado por IA' : 'Análise interna'}
     </span>
   )
 }
