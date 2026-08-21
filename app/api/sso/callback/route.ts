@@ -25,7 +25,13 @@ export async function GET(request: Request) {
   const token = url.searchParams.get('token')
   const secret = process.env.SSO_SHARED_SECRET
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
-  const loginUrl = new URL('/', request.url)
+  // Base pública dos redirects. No VPS (atrás do Traefik/Coolify) o
+  // request.url chega como http://localhost:3000 — medido em 21/08/2026:
+  // mesmo com o header Host correto, o redirect saía para localhost e o
+  // navegador do usuário morria em localhost:3000. Nunca usar request.url
+  // para montar URL absoluta aqui.
+  const base = process.env.NEXT_PUBLIC_APP_URL ?? 'https://www.winnershealthintelligence.com.br'
+  const loginUrl = new URL('/', base)
 
   if (!token || !secret || !serviceKey) return NextResponse.redirect(loginUrl)
 
@@ -60,5 +66,5 @@ export async function GET(request: Request) {
   })
   if (verifyError) return NextResponse.redirect(loginUrl)
 
-  return NextResponse.redirect(new URL('/dashboard', request.url))
+  return NextResponse.redirect(new URL('/dashboard', base))
 }
