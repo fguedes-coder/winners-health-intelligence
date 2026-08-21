@@ -15,3 +15,8 @@ node_modules
 # A pasta contém PDFs/relatórios e screenshots que podem exibir nomes reais de
 # beneficiários e custos de saúde (ex.: 24-relatorios-executivo.pdf).
 docs/screenshots/
+
+# Cache incremental do TypeScript: artefato de build, nunca versionar.
+# Alem do ruido em diff, quebra o build por nixpacks (cache mount de
+# diretorio sobre arquivo: "not a directory").
+tsconfig.tsbuildinfo
