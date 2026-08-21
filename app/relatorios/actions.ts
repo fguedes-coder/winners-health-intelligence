@@ -1,9 +1,26 @@
 'use server'
 
-import { put, del } from '@vercel/blob'
 import { revalidatePath } from 'next/cache'
 import { requireAuthAction } from '@/lib/auth/require-user'
 import { createClient } from '@/lib/supabase/server'
+
+// Bucket público do logo do cliente. Antes isto vivia no @vercel/blob, que só
+// existe dentro da Vercel; com o app no VPS o armazenamento passa a ser o
+// próprio Supabase, o mesmo que já guarda os arquivos de importação.
+const BUCKET_LOGOS = 'logos-clientes'
+
+/**
+ * Extrai o caminho dentro do bucket a partir da URL pública do Storage.
+ * Devolve null para URL de outra origem — logos antigos ficaram no Vercel
+ * Blob e não podem ser apagados por aqui; somem quando o blob store for
+ * desativado.
+ */
+function caminhoNoBucket(url: string | null): string | null {
+  if (!url) return null
+  const marca = `/storage/v1/object/public/${BUCKET_LOGOS}/`
+  const i = url.indexOf(marca)
+  return i === -1 ? null : decodeURIComponent(url.slice(i + marca.length))
+}
 
 export type RelatorioConfig = {
   clienteNome: string | null
@@ -65,22 +82,33 @@ export async function uploadLogoCliente(
       .select('logo_cliente_url')
       .eq('id', 1)
       .maybeSingle()
-    if (atual?.logo_cliente_url) {
-      await del(atual.logo_cliente_url).catch(() => {})
+    const anterior = caminhoNoBucket(atual?.logo_cliente_url ?? null)
+    if (anterior) {
+      await supabase.storage.from(BUCKET_LOGOS).remove([anterior])
     }
 
-    const blob = await put(`relatorios/logo-cliente-${Date.now()}-${file.name}`, file, {
-      access: 'public',
-    })
+    const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_')
+    const caminho = `logo-cliente-${Date.now()}-${safeName}`
+    const { error: uploadError } = await supabase.storage
+      .from(BUCKET_LOGOS)
+      .upload(caminho, file, {
+        contentType: file.type || 'image/png',
+        upsert: false,
+      })
+    if (uploadError) return { ok: false, error: uploadError.message }
+
+    const {
+      data: { publicUrl },
+    } = supabase.storage.from(BUCKET_LOGOS).getPublicUrl(caminho)
 
     const { error } = await supabase
       .from('relatorio_config')
-      .update({ logo_cliente_url: blob.url, atualizado_em: new Date().toISOString() })
+      .update({ logo_cliente_url: publicUrl, atualizado_em: new Date().toISOString() })
       .eq('id', 1)
     if (error) return { ok: false, error: error.message }
 
     revalidatePath('/relatorios')
-    return { ok: true, url: blob.url }
+    return { ok: true, url: publicUrl }
   } catch (err) {
     console.error('[v0] Erro no upload do logo:', err)
     return { ok: false, error: 'Falha ao enviar a imagem. Tente novamente.' }
@@ -97,8 +125,9 @@ export async function removerLogoCliente(): Promise<{ ok: boolean; error?: strin
     .select('logo_cliente_url')
     .eq('id', 1)
     .maybeSingle()
-  if (atual?.logo_cliente_url) {
-    await del(atual.logo_cliente_url).catch(() => {})
+  const caminho = caminhoNoBucket(atual?.logo_cliente_url ?? null)
+  if (caminho) {
+    await supabase.storage.from(BUCKET_LOGOS).remove([caminho])
   }
   const { error } = await supabase
     .from('relatorio_config')
