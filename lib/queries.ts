@@ -668,6 +668,9 @@ export async function getDashboardData(
       .select(
         'apolice_id, subestipulante_id, cod_usuario, tipo_beneficiario, idade, plano, prestador_nome, prestador_cnpj, categoria_atendimento, servico_principal, servico, grupo_estatistico, valor_pago, data_atendimento, internacao, saude_mental, competencia',
       )
+      // Desempate por id: sem uma ordem TOTAL, o Postgres nao garante a mesma
+      // sequencia entre as paginas, e o .range() abaixo repete e pula linhas.
+      .order('id', { ascending: true })
       .range(from, from + PAGE - 1)
     if (error || !data || data.length === 0) break
     eventos.push(...(data as EventoRow[]))
@@ -1344,6 +1347,9 @@ export async function getSubestipulantesPorApolice(): Promise<
     const { data, error } = await supabase
       .from('eventos_utilizacao')
       .select('subestipulante_id, cod_usuario, valor_pago')
+      // Desempate por id: sem uma ordem TOTAL, o Postgres nao garante a mesma
+      // sequencia entre as paginas, e o .range() abaixo repete e pula linhas.
+      .order('id', { ascending: true })
       .range(from, from + PAGE - 1)
     if (error || !data || data.length === 0) break
     for (const e of data as {
@@ -1458,6 +1464,9 @@ export async function getEventosDetalhados(): Promise<EventoDetalhado[]> {
         'id, apolice_id, subestipulante_id, cod_usuario, tipo_beneficiario, sexo, idade, plano, prestador_nome, prestador_cnpj, servico_principal, servico, grupo_estatistico, categoria_atendimento, internacao, saude_mental, valor_apresentado, valor_pago, valor_copart, valor_empresa, data_atendimento, data_pagamento, competencia',
       )
       .order('data_atendimento', { ascending: false })
+      // Desempate por id: sem uma ordem TOTAL, o Postgres nao garante a mesma
+      // sequencia entre as paginas, e o .range() abaixo repete e pula linhas.
+      .order('id', { ascending: true })
       .range(from, from + PAGE - 1)
     if (error || !data || data.length === 0) break
     for (const e of data as Record<string, unknown>[]) {
@@ -1741,6 +1750,9 @@ export async function getColaboradores(
       .select(
         'apolice_id, subestipulante_id, cod_usuario, tipo_beneficiario, plano, valor_pago, data_pagamento, competencia',
       )
+      // Desempate por id: sem uma ordem TOTAL, o Postgres nao garante a mesma
+      // sequencia entre as paginas, e o .range() abaixo repete e pula linhas.
+      .order('id', { ascending: true })
       .range(from, from + PAGE - 1)
     if (error || !data || data.length === 0) break
     for (const e of data as Record<string, unknown>[]) {
@@ -2217,6 +2229,9 @@ export async function getDiagnosticoBase(
       .select(
         'apolice_id, subestipulante_id, cod_usuario, plano, valor_pago, data_pagamento, competencia',
       )
+      // Desempate por id: sem uma ordem TOTAL, o Postgres nao garante a mesma
+      // sequencia entre as paginas, e o .range() abaixo repete e pula linhas.
+      .order('id', { ascending: true })
       .range(from, from + PAGE - 1)
     if (error || !data || data.length === 0) break
     for (const e of data as Record<string, unknown>[]) {
@@ -2496,6 +2511,9 @@ export async function getBeneficiarioPerfil(
         'valor_pago, competencia, data_pagamento, plano, tipo_beneficiario, sexo, apolice_id, subestipulante_id, servico_principal, servico, grupo_estatistico, categoria_atendimento, internacao, saude_mental',
       )
       .eq('cod_usuario', cart)
+      // Desempate por id: sem uma ordem TOTAL, o Postgres nao garante a mesma
+      // sequencia entre as paginas, e o .range() abaixo repete e pula linhas.
+      .order('id', { ascending: true })
       .range(from, from + PAGE - 1)
     if (error || !data || data.length === 0) break
     for (const e of data as Record<string, unknown>[]) {
@@ -2690,6 +2708,9 @@ export async function getQualidadeCadastral(): Promise<QualidadeCadastral> {
       .select(
         'cod_usuario, sexo, plano, tipo_beneficiario, apolice_id, subestipulante_id',
       )
+      // Desempate por id: sem uma ordem TOTAL, o Postgres nao garante a mesma
+      // sequencia entre as paginas, e o .range() abaixo repete e pula linhas.
+      .order('id', { ascending: true })
       .range(from, from + PAGE - 1)
     if (error || !data || data.length === 0) break
     for (const e of data as Record<string, unknown>[]) {
