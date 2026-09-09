@@ -64,6 +64,11 @@ const MAPA_COLUNAS: Record<keyof Omit<VidaRow, never>, string[]> = {
   carteirinha: [
     'carteiradeidentificacao',
     'carteiraidentificacao',
+    // Export do Portal do Corretor SulAmérica traz "Carteirinha (CI)", que
+    // normaliza para "carteirinhaci". Sem estes sinônimos a deteccao caía em
+    // "codigo" (o código do subestipulante) e todas as linhas viravam uma só.
+    'carteirinhaci',
+    'carteiraci',
     'numerocarteirinha',
     'numerodacarteira',
     'numerocarteira',
@@ -369,6 +374,19 @@ export async function importarVidas(
     const dedup = new Map<string, VidaRow>()
     for (const r of rows) dedup.set(r.carteirinha, r)
     const finais = [...dedup.values()]
+
+    // Guarda contra coluna de identificação errada. Se o identificador
+    // escolhido repete a ponto de colapsar o arquivo, ele não identifica
+    // ninguém — é um código de contrato, de empresa ou de plano. Sem esta
+    // checagem o importador aceitava 190 linhas e gravava 1, em silêncio.
+    const LIMITE_COLAPSO = 0.5
+    if (rows.length >= 10 && finais.length < rows.length * LIMITE_COLAPSO) {
+      return {
+        ...vazio,
+        colunasDetectadas: mapeamento,
+        error: `A coluna usada como identificação ("${mapeamento.carteirinha ?? '?'}") repete demais: ${rows.length} linhas resultaram em apenas ${finais.length} identificador(es) distinto(s). Provavelmente é um código de contrato ou de empresa, não a carteirinha. Renomeie a coluna da carteirinha para "Carteirinha" e importe de novo.`,
+      }
+    }
 
     const supabase = await createClient()
 

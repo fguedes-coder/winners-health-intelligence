@@ -467,6 +467,33 @@ export function ColaboradoresExplorer({
         </CardContent>
       </Card>
 
+      {/*
+        A base de vidas é por competência. Quando o mês escolhido não tem base
+        própria, a tela exibe a mais recente — e precisa DIZER isso: sem o
+        aviso, pedir agosto mostrava a base de julho como se fosse de agosto.
+      */}
+      {data.baseVidasDeOutraCompetencia && (
+        <div className="flex items-start gap-3 rounded-xl border border-amber-500/30 bg-amber-500/[0.07] p-5">
+          <span className="mt-0.5 flex size-10 shrink-0 items-center justify-center rounded-lg bg-amber-500/15 text-amber-500">
+            <AlertTriangle className="size-5" aria-hidden="true" />
+          </span>
+          <div>
+            <p className="text-sm font-semibold text-foreground">
+              Não há base de vidas para{' '}
+              {formatarCompetencia(data.baseVidasDeOutraCompetencia.pedida)}
+            </p>
+            <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
+              Os números de população abaixo são da base de{' '}
+              <span className="font-medium text-foreground">
+                {formatarCompetencia(data.baseVidasDeOutraCompetencia.exibida)}
+              </span>
+              , a mais recente importada — não do mês selecionado. Para ver a
+              população do mês escolhido, importe a base de vidas dele.
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* Composição da população (Base de Vidas ativa) */}
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         <StatCard
@@ -474,9 +501,11 @@ export function ColaboradoresExplorer({
           value={formatNumber(data.totalVidas)}
           icon={Users}
           hint={
-            data.temBaseVidas
-              ? 'na base de vidas ativa'
-              : 'a partir da utilização'
+            data.baseVidasDeOutraCompetencia
+              ? `base de ${formatarCompetencia(data.baseVidasDeOutraCompetencia.exibida)}`
+              : data.temBaseVidas
+                ? 'na base de vidas ativa'
+                : 'a partir da utilização'
           }
         />
         <StatCard
