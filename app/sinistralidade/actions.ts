@@ -1,5 +1,7 @@
 'use server'
 
+import { parseValorBR } from '@/lib/data'
+
 import { revalidatePath } from 'next/cache'
 import { requireAuthAction } from '@/lib/auth/require-user'
 import { createClient } from '@/lib/supabase/server'
@@ -44,7 +46,7 @@ function parse(formData: FormData): FaturaInput {
   const vidasRaw = String(formData.get('vidas') ?? '').trim()
   return {
     competencia: String(formData.get('competencia') ?? '').trim(),
-    valor: valorRaw === '' ? null : Number(valorRaw.replace(',', '.')),
+    valor: valorRaw === '' ? null : parseValorBR(valorRaw),
     vidas: vidasRaw === '' ? null : Number.parseInt(vidasRaw, 10),
     apolice_id: String(formData.get('apolice_id') ?? '').trim() || null,
     apolice_nome: String(formData.get('apolice_nome') ?? '').trim() || null,
@@ -61,6 +63,16 @@ export async function upsertFatura(formData: FormData) {
   const d = parse(formData)
   if (!/^\d{4}-\d{2}$/.test(d.competencia)) {
     return { error: 'Informe uma competência válida (mês/ano).' }
+  }
+  // Digitado porém ilegível é erro de formato, não campo em branco: sem esta
+  // distinção, um "83,801,89" caía na mensagem "informe ao menos o valor" e
+  // mandava a pessoa procurar o problema no lugar errado.
+  const valorDigitado = String(formData.get('valor') ?? '').trim() !== ''
+  if (valorDigitado && d.valor === null) {
+    return {
+      error:
+        'Não consegui ler o valor da fatura. Use o formato 83.801,89 (ponto no milhar, vírgula nos centavos).',
+    }
   }
   if (d.valor === null && d.vidas === null) {
     return { error: 'Informe ao menos o valor da fatura ou o total de vidas.' }
