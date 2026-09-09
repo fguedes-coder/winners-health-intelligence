@@ -303,14 +303,28 @@ export function FaturasManager({
                 >
                   Valor da fatura (R$)
                 </label>
+                {/*
+                  Texto, não `type="number"`: o campo numérico do navegador
+                  recusa separador de milhar, então "83.801,89" — a grafia
+                  natural de quem lança a fatura — chegava vazia ao servidor e
+                  o formulário respondia "informe ao menos o valor". O parse
+                  aceita as duas grafias (ver parseValorBR em lib/data.ts).
+                */}
                 <input
                   id="valor"
                   name="valor"
-                  type="number"
-                  min={0}
-                  step="0.01"
-                  defaultValue={editing?.valor ?? ''}
-                  placeholder="Ex.: 125000.00"
+                  type="text"
+                  inputMode="decimal"
+                  autoComplete="off"
+                  defaultValue={
+                    editing?.valor != null
+                      ? editing.valor.toLocaleString('pt-BR', {
+                          minimumFractionDigits: 2,
+                          maximumFractionDigits: 2,
+                        })
+                      : ''
+                  }
+                  placeholder="Ex.: 83.801,89"
                   className={inputClass}
                 />
               </div>
