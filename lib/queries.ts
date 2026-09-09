@@ -1569,8 +1569,14 @@ export type ColaboradoresResult = {
   vidasCadastradas: number // presentes na base de vidas elegíveis
   utilizadoresForaDaBase: number // tiveram eventos mas não estão no cadastro
   temBaseVidas: boolean
-  // Competência (YYYY-MM) da base de vidas oficial ativa (a mais recente)
+  // Competência (YYYY-MM) da base de vidas de fato exibida
   competenciaAtiva: string | null
+  /**
+   * Preenchido quando o usuário pediu um mês que NÃO tem base de vidas própria
+   * e a tela está mostrando outra competência. Sem isto, o número aparecia como
+   * se fosse do mês selecionado: pedir agosto exibia a base de julho, calada.
+   */
+  baseVidasDeOutraCompetencia: { pedida: string; exibida: string } | null
   // Competências disponíveis (histórico), da mais recente para a mais antiga
   competenciasDisponiveis: string[]
   // Financeiro / utilização
@@ -1673,7 +1679,17 @@ export async function getColaboradores(
 
   // Competências disponíveis e a competência oficial ativa (a mais recente).
   const competenciasDisponiveis = await listarCompetenciasVidas(supabase)
-  const competenciaAtiva = competenciasDisponiveis[0] ?? null
+  // A base do mês pedido tem precedência sobre "a mais recente". Só cai para a
+  // mais recente quando o mês pedido não tem base — e nesse caso a tela avisa.
+  const mesPedido = filtros.mes && /^\d{4}-\d{2}$/.test(filtros.mes) ? filtros.mes : null
+  const temBaseDoMes = mesPedido !== null && competenciasDisponiveis.includes(mesPedido)
+  const competenciaAtiva = temBaseDoMes
+    ? mesPedido
+    : (competenciasDisponiveis[0] ?? null)
+  const baseVidasDeOutraCompetencia =
+    mesPedido && !temBaseDoMes && competenciaAtiva
+      ? { pedida: mesPedido, exibida: competenciaAtiva }
+      : null
 
   const vidasQuery = supabase
     .from('beneficiario_vidas')
@@ -2012,6 +2028,7 @@ export async function getColaboradores(
     totalComNome,
     totalSemNome: totalVidas - totalComNome,
     competenciaAtiva,
+    baseVidasDeOutraCompetencia,
     competenciasDisponiveis,
     mesesDisponiveis: [...mesesSet].sort(),
     anosDisponiveis: [...anosSet].sort(),
