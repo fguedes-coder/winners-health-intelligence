@@ -4,6 +4,7 @@ import { useMemo, useRef, useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import {
+  ArrowLeftRight,
   ArrowDown,
   ArrowUp,
   ArrowUpDown,
@@ -354,6 +355,18 @@ export function ColaboradoresExplorer({
           : 'Acumulado (todas as competências)'
 
   // Link para o Diagnóstico de Base preservando o período selecionado.
+  const movimentacaoHref = (() => {
+    const p = new URLSearchParams()
+    p.set('modo', modo)
+    if (modo === 'mes' && mes) p.set('mes', mes)
+    if (modo === 'ano' && ano) p.set('ano', ano)
+    if (modo === 'periodo') {
+      if (de) p.set('de', de)
+      if (ate) p.set('ate', ate)
+    }
+    return `/colaboradores/movimentacao?${p.toString()}`
+  })()
+
   const diagnosticoHref = (() => {
     const p = new URLSearchParams()
     p.set('modo', modo)
@@ -495,6 +508,22 @@ export function ColaboradoresExplorer({
       )}
 
       {/* Composição da população (Base de Vidas ativa) */}
+      <div className="flex items-center justify-between gap-3">
+        <h2 className="text-sm font-semibold text-foreground">
+          Composição da população
+        </h2>
+        {/*
+          A base de vidas é uma fotografia por competência; comparar duas fotos
+          é o que revela quem entrou e quem saiu — e quanto quem saiu usava.
+        */}
+        <Link
+          href={movimentacaoHref}
+          className={buttonVariants({ variant: 'outline', size: 'sm' })}
+        >
+          <ArrowLeftRight className="size-4" />
+          Movimentação da carteira
+        </Link>
+      </div>
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         <StatCard
           label="Total de Vidas"
