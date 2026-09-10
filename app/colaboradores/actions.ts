@@ -786,13 +786,23 @@ export type ImportNomesResult = {
   error?: string
 }
 
+// Menor quantidade de dígitos que ainda pode ser uma carteirinha (14 = número
+// da família, sem o sufixo que identifica titular/dependente). Abaixo disso é
+// número de linha, índice ou código de plano — não é vínculo de beneficiário.
+const MIN_DIGITOS_CARTEIRINHA = 14
+
 // Faz o parse de um conteúdo de texto/CSV com pares "carteirinha;nome".
 // Aceita separadores ; , ou TAB e ignora cabeçalho quando detectado.
-function parseNomes(
-  conteudo: string,
-): { carteirinha: string; nome: string }[] {
+// A carteirinha é normalizada para os 16 dígitos que o resto do sistema usa: o
+// Portal do Corretor exporta 17 (o último é verificador) e, sem normalizar, o
+// nome vira linha órfã que nunca casa com a base de vidas.
+function parseNomes(conteudo: string): {
+  registros: { carteirinha: string; nome: string }[]
+  descartadas: number
+} {
   const linhas = conteudo.split(/\r?\n/)
   const out: { carteirinha: string; nome: string }[] = []
+  let descartadas = 0
   for (const raw of linhas) {
     const linha = raw.trim()
     if (!linha) continue
@@ -815,9 +825,17 @@ function parseNomes(
       continue
     }
     if (!/\d/.test(carteirinha)) continue
-    out.push({ carteirinha, nome })
+    // Sem isto, "1;FULANO" entra como vínculo válido: foi assim que 164 linhas
+    // de um arquivo de largura fixa (1ª coluna = número da linha) sujaram a
+    // tabela em 07/07/2026.
+    const cart = normalizarCarteirinha(carteirinha)
+    if (cart.length < MIN_DIGITOS_CARTEIRINHA) {
+      descartadas++
+      continue
+    }
+    out.push({ carteirinha: cart, nome })
   }
-  return out
+  return { registros: out, descartadas }
 }
 
 export async function importarNomes(
@@ -849,7 +867,7 @@ export async function importarNomes(
     }
 
     const conteudo = await file.text()
-    const registros = parseNomes(conteudo)
+    const { registros, descartadas } = parseNomes(conteudo)
     if (registros.length === 0) {
       return {
         ok: false,
@@ -912,7 +930,7 @@ export async function importarNomes(
       ok: true,
       inseridos,
       atualizados,
-      ignorados: registros.length - rows.length,
+      ignorados: descartadas + (registros.length - rows.length),
       total: rows.length,
     }
   } catch (e) {
@@ -936,9 +954,11 @@ export async function salvarNome(
   const auth = await requireAuthAction()
   if ('error' in auth) return { ok: false, error: auth.error }
 
-  const cart = carteirinha.trim()
+  const cart = normalizarCarteirinha(carteirinha)
   const n = nome.trim()
-  if (!cart) return { ok: false, error: 'Carteirinha inválida.' }
+  if (cart.length < MIN_DIGITOS_CARTEIRINHA) {
+    return { ok: false, error: 'Carteirinha inválida.' }
+  }
 
   const supabase = await createClient()
 
