@@ -2953,3 +2953,205 @@ export async function getQualidadeCadastral(): Promise<QualidadeCadastral> {
 
   return { temBaseVidas: temBase, total, competenciaAtiva, campos }
 }
+
+// ===========================================================================
+// Movimentação da carteira — entradas e saídas entre competências
+//
+// A base de vidas é uma FOTOGRAFIA por competência: comparar duas fotos diz
+// quem entrou e quem saiu. Cruzando com a utilização, responde a pergunta que
+// motivou a tela: alguém que foi desligado vinha usando muito o plano?
+//
+// Sem isto, a saída de um beneficiário de alta utilização passava despercebida
+// — o custo dele continuava no acumulado e ninguém sabia que ele não estava
+// mais na carteira.
+// ===========================================================================
+
+export type MovimentoTipo = 'ENTRADA' | 'SAIDA'
+
+export type MovimentacaoPessoa = {
+  carteirinha: string
+  nome: string | null
+  tipo: string | null
+  plano: string | null
+  empresa: string | null
+  movimento: MovimentoTipo
+  /** Competência em que a entrada ou saída foi observada. */
+  competencia: string
+  /** Utilização acumulada da pessoa, em toda a série disponível. */
+  eventos: number
+  valorUtilizado: number
+  ultimaUtilizacao: string | null
+  /** Competências em que constou na base, da mais antiga para a mais recente. */
+  competenciasNaBase: string[]
+}
+
+export type MovimentacaoCompetencia = {
+  competencia: string
+  anterior: string | null
+  vidas: number
+  entradas: number
+  saidas: number
+  /** Utilização acumulada de quem saiu nesta competência. */
+  valorDasSaidas: number
+  eventosDasSaidas: number
+}
+
+export type MovimentacaoCarteira = {
+  competencias: MovimentacaoCompetencia[]
+  pessoas: MovimentacaoPessoa[]
+  /** Competência mais recente com base importada. */
+  competenciaAtual: string | null
+  temBase: boolean
+}
+
+export async function getMovimentacaoCarteira(): Promise<MovimentacaoCarteira> {
+  const supabase = await createClient()
+
+  // 1) Base de vidas completa (todas as competências).
+  type VidaLinha = {
+    carteirinha: string | null
+    competencia: string | null
+    nome: string | null
+    tipo: string | null
+    plano: string | null
+    empresa: string | null
+  }
+  const vidas: VidaLinha[] = []
+  {
+    const PAGE = 1000
+    let from = 0
+    for (;;) {
+      const { data, error } = await supabase
+        .from('beneficiario_vidas')
+        .select('carteirinha, competencia, nome, tipo, plano, empresa')
+        .order('id', { ascending: true })
+        .range(from, from + PAGE - 1)
+      if (error || !data || data.length === 0) break
+      vidas.push(...(data as VidaLinha[]))
+      if (data.length < PAGE) break
+      from += PAGE
+    }
+  }
+  if (vidas.length === 0) {
+    return { competencias: [], pessoas: [], competenciaAtual: null, temBase: false }
+  }
+
+  // 2) Utilização acumulada por carteirinha.
+  type EventoLinha = {
+    cod_usuario: string | null
+    valor_pago: number | null
+    competencia: string | null
+  }
+  const util = new Map<
+    string,
+    { eventos: number; valor: number; ultima: string | null }
+  >()
+  {
+    const PAGE = 1000
+    let from = 0
+    for (;;) {
+      const { data, error } = await supabase
+        .from(EVENTOS_UTILIZACAO_VIEW)
+        .select('cod_usuario, valor_pago, competencia')
+        .order('id', { ascending: true })
+        .range(from, from + PAGE - 1)
+      if (error || !data || data.length === 0) break
+      for (const e of data as EventoLinha[]) {
+        const ci = (e.cod_usuario ?? '').trim()
+        if (!ci) continue
+        const cur = util.get(ci) ?? { eventos: 0, valor: 0, ultima: null }
+        cur.eventos++
+        cur.valor += Number(e.valor_pago ?? 0)
+        if (e.competencia && (!cur.ultima || e.competencia > cur.ultima)) {
+          cur.ultima = e.competencia
+        }
+        util.set(ci, cur)
+      }
+      if (data.length < PAGE) break
+      from += PAGE
+    }
+  }
+
+  // 3) Índices por competência.
+  const porCompetencia = new Map<string, Map<string, VidaLinha>>()
+  const competenciasNaBase = new Map<string, string[]>()
+  for (const v of vidas) {
+    const comp = v.competencia
+    const ci = (v.carteirinha ?? '').trim()
+    if (!comp || !ci) continue
+    if (!porCompetencia.has(comp)) porCompetencia.set(comp, new Map())
+    porCompetencia.get(comp)!.set(ci, v)
+    const lista = competenciasNaBase.get(ci) ?? []
+    if (!lista.includes(comp)) lista.push(comp)
+    competenciasNaBase.set(ci, lista)
+  }
+  for (const lista of competenciasNaBase.values()) lista.sort()
+
+  const ordenadas = [...porCompetencia.keys()].sort()
+  const competencias: MovimentacaoCompetencia[] = []
+  const pessoas: MovimentacaoPessoa[] = []
+
+  const montar = (
+    ci: string,
+    v: VidaLinha | undefined,
+    movimento: MovimentoTipo,
+    competencia: string,
+  ): MovimentacaoPessoa => {
+    const u = util.get(ci)
+    return {
+      carteirinha: ci,
+      nome: v?.nome ?? null,
+      tipo: v?.tipo ?? null,
+      plano: v?.plano ?? null,
+      empresa: v?.empresa ?? null,
+      movimento,
+      competencia,
+      eventos: u?.eventos ?? 0,
+      valorUtilizado: u?.valor ?? 0,
+      ultimaUtilizacao: u?.ultima ?? null,
+      competenciasNaBase: competenciasNaBase.get(ci) ?? [],
+    }
+  }
+
+  for (let i = 0; i < ordenadas.length; i++) {
+    const comp = ordenadas[i]
+    const anterior = i > 0 ? ordenadas[i - 1] : null
+    const atual = porCompetencia.get(comp)!
+    const antes = anterior ? porCompetencia.get(anterior)! : null
+
+    // A primeira competência da série não tem "entradas": não há com o que
+    // comparar. Contá-la como entrada inflaria o mês inicial com a carteira
+    // inteira e faria o gráfico começar com um pico falso.
+    const entradas = antes
+      ? [...atual.keys()].filter((ci) => !antes.has(ci))
+      : []
+    const saidas = antes ? [...antes.keys()].filter((ci) => !atual.has(ci)) : []
+
+    for (const ci of entradas) pessoas.push(montar(ci, atual.get(ci), 'ENTRADA', comp))
+    for (const ci of saidas) pessoas.push(montar(ci, antes!.get(ci), 'SAIDA', comp))
+
+    const daSaida = saidas.map((ci) => util.get(ci))
+    competencias.push({
+      competencia: comp,
+      anterior,
+      vidas: atual.size,
+      entradas: entradas.length,
+      saidas: saidas.length,
+      valorDasSaidas: daSaida.reduce((s, u) => s + (u?.valor ?? 0), 0),
+      eventosDasSaidas: daSaida.reduce((s, u) => s + (u?.eventos ?? 0), 0),
+    })
+  }
+
+  pessoas.sort(
+    (a, b) =>
+      (a.competencia < b.competencia ? 1 : a.competencia > b.competencia ? -1 : 0) ||
+      b.valorUtilizado - a.valorUtilizado,
+  )
+
+  return {
+    competencias: competencias.reverse(),
+    pessoas,
+    competenciaAtual: ordenadas[ordenadas.length - 1] ?? null,
+    temBase: true,
+  }
+}
