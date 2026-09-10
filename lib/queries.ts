@@ -2045,6 +2045,7 @@ export type CampoVinculo = 'CARTEIRINHA' | 'CPF' | 'NOME'
 
 export type DivergenciaCodigo =
   | 'CARTEIRINHA_NAO_LOCALIZADA'
+  | 'DESLIGADO'
   | 'NOME_DIVERGENTE'
   | 'NOME_AMBIGUO'
   | 'SEM_IDENTIFICACAO'
@@ -2060,6 +2061,9 @@ export type DivergenciaRow = {
   campoVinculo: CampoVinculo
   motivoCodigo: DivergenciaCodigo
   motivo: string
+  // Última competência em que a pessoa constou na base de vidas, quando houver.
+  // É o que separa um desligamento de uma carteirinha desconhecida.
+  ultimaCompetenciaNaBase: string | null
   // Sugestão de cadastro correspondente encontrado por outro campo.
   carteirinhaSugerida: string | null
   nomeSugerido: string | null
@@ -2114,6 +2118,10 @@ function normalizarTexto(v: string | null | undefined): string {
 }
 
 const MOTIVO_LABEL: Record<DivergenciaCodigo, string> = {
+  // "Não localizada" e "desligamento" pareciam a mesma coisa e não são: a
+  // primeira é cadastro faltando, a segunda é funcionamento normal — quem saiu
+  // do plano e teve atendimento faturado depois da saída.
+  DESLIGADO: 'Desligamento — constava em base anterior, sem vínculo ativo',
   CARTEIRINHA_NAO_LOCALIZADA: 'Carteirinha não localizada na base elegível',
   NOME_DIVERGENTE: 'Carteirinha divergente (nome localizado com outra carteirinha)',
   NOME_AMBIGUO: 'Nome corresponde a mais de um cadastro (ambíguo)',
@@ -2145,6 +2153,26 @@ export async function getDiagnosticoBase(
     vidasQuery,
     loadMasterIndex(supabase),
   ])
+
+  // Histórico da base de vidas: em que competências cada carteirinha já constou.
+  // Sem isto, quem saiu do plano cai no mesmo balde de quem nunca existiu.
+  const { data: historicoVidas } = await supabase
+    .from('beneficiario_vidas')
+    .select('carteirinha, competencia')
+    .neq('competencia', competenciaAtiva ?? '')
+    .order('id', { ascending: true })
+  const ultimaCompetenciaPorCarteirinha = new Map<string, string>()
+  for (const h of (historicoVidas ?? []) as {
+    carteirinha: string | null
+    competencia: string | null
+  }[]) {
+    if (!h.carteirinha || !h.competencia) continue
+    const chave = normalizarCarteirinha(h.carteirinha) || h.carteirinha.trim()
+    const atual = ultimaCompetenciaPorCarteirinha.get(chave)
+    if (!atual || h.competencia > atual) {
+      ultimaCompetenciaPorCarteirinha.set(chave, h.competencia)
+    }
+  }
 
   // Data da última atualização da base de vidas elegíveis.
   const baseAtualizadaEm =
@@ -2318,6 +2346,12 @@ export async function getDiagnosticoBase(
     let carteirinhaSugerida: string | null = null
     let nomeSugerido: string | null = null
 
+    const ultimaCompetenciaNaBase =
+      ultimaCompetenciaPorCarteirinha.get(acc.carteirinha) ?? null
+
+    // Ordem de precedência: reconciliar com alguém ATIVO vale mais que explicar
+    // a ausência. Só depois disso o histórico decide entre desligamento e
+    // carteirinha realmente desconhecida.
     if (matchNome.length === 1) {
       campoVinculo = 'NOME'
       motivoCodigo = 'NOME_DIVERGENTE'
@@ -2327,6 +2361,8 @@ export async function getDiagnosticoBase(
       campoVinculo = 'NOME'
       motivoCodigo = 'NOME_AMBIGUO'
       nomeSugerido = matchNome[0].nome
+    } else if (ultimaCompetenciaNaBase) {
+      motivoCodigo = 'DESLIGADO'
     } else if (!nome) {
       motivoCodigo = 'SEM_IDENTIFICACAO'
     } else {
@@ -2342,7 +2378,13 @@ export async function getDiagnosticoBase(
       eventos: acc.eventos,
       campoVinculo,
       motivoCodigo,
-      motivo: MOTIVO_LABEL[motivoCodigo],
+      // No desligamento a competência entra no texto: "até 07/2026" responde a
+      // primeira pergunta de quem lê a linha.
+      motivo:
+        motivoCodigo === 'DESLIGADO' && ultimaCompetenciaNaBase
+          ? `Desligamento — constava na base até ${formatCompetencia(ultimaCompetenciaNaBase)}`
+          : MOTIVO_LABEL[motivoCodigo],
+      ultimaCompetenciaNaBase,
       carteirinhaSugerida,
       nomeSugerido,
     })
