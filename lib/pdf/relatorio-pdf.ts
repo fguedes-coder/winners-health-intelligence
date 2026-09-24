@@ -129,6 +129,15 @@ function pct(v: number | null): string {
     : `${v.toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%`
 }
 
+/**
+ * Percentual com ponto decimal → vírgula ("42.3%" → "42,3%"). O modelo copia
+ * os números do payload JSON, que usa ponto; o resto do relatório é pt-BR.
+ * Só toca em número seguido de "%" — "R$ 8.381" (milhar) fica como está.
+ */
+export function decimaisPtBR(texto: string): string {
+  return texto.replace(/(\d)\.(\d+)(\s*%)/g, '$1,$2$3')
+}
+
 /** Enumeração em português: "a", "a e b", "a, b e c". */
 function listaPtBR(itens: string[]): string {
   return itens.length <= 1
@@ -1942,7 +1951,7 @@ class Relatorio {
     this.doc.text(origem, MARGIN, this.y)
     this.y += 16
 
-    this.markdownBlock(analiseIA.texto)
+    this.markdownBlock(decimaisPtBR(analiseIA.texto))
   }
 
   // ---- cabeçalho / rodapé (passe final) -----------------------------------
