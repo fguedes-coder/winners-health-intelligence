@@ -129,6 +129,13 @@ function pct(v: number | null): string {
     : `${v.toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%`
 }
 
+/** Enumeração em português: "a", "a e b", "a, b e c". */
+function listaPtBR(itens: string[]): string {
+  return itens.length <= 1
+    ? (itens[0] ?? '')
+    : `${itens.slice(0, -1).join(', ')} e ${itens[itens.length - 1]}`
+}
+
 /** Formatação compacta para eixos de gráfico (R$ 1,2 mi / R$ 340 mil). */
 function fmtCompacto(v: number): string {
   if (v >= 1_000_000) return `R$ ${(v / 1_000_000).toFixed(1).replace('.', ',')} mi`
@@ -258,6 +265,18 @@ class Relatorio {
   // Layout: fundo navy com motivos decorativos, emblema + wordmark, título,
   // cartão do cliente + selo de sinistralidade lado a lado, régua de KPIs e
   // rodapé com emissão/LGPD. Referência: capa aprovada em ago/2026.
+  /**
+   * Texto centralizado em `cx` com espaçamento entre letras. O `align:
+   * 'center'` do jsPDF mede a largura SEM o charSpace e desloca o texto para
+   * a direita — quanto maior o espaçamento, maior o desvio ("HEALTH
+   * INTELLIGENCE" saía visivelmente fora do eixo do escudo na capa).
+   */
+  private textoCentralizado(texto: string, cx: number, y: number, charSpace: number) {
+    const largura =
+      this.doc.getTextWidth(texto) + charSpace * Math.max(0, texto.length - 1)
+    this.doc.text(texto, cx - largura / 2, y, { charSpace })
+  }
+
   private capa() {
     const doc = this.doc
     // Página 1 já existe. Marca como capa (sem cabeçalho/rodapé).
@@ -294,17 +313,14 @@ class Relatorio {
     doc.text('WINNERS', PAGE_W / 2, topY, { align: 'center' })
     this.ink(BLUE_LT)
     this.font('bold', 11)
-    doc.text('HEALTH INTELLIGENCE', PAGE_W / 2, topY + 19, {
-      align: 'center',
-      charSpace: 3,
-    })
+    this.textoCentralizado('HEALTH INTELLIGENCE', PAGE_W / 2, topY + 19, 3)
     this.font('normal', 7.5)
     this.ink(CAPA_MUTED)
-    doc.text(
+    this.textoCentralizado(
       'DADOS QUE CUIDAM. INTELIGÊNCIA QUE GERA VALOR.',
       PAGE_W / 2,
       topY + 36,
-      { align: 'center', charSpace: 1.2 },
+      1.2,
     )
 
     // Bloco de título
@@ -534,7 +550,7 @@ class Relatorio {
 
     this.ink([210, 222, 240])
     this.font('bold', 9)
-    doc.text('SINISTRALIDADE', cx, y + 66, { align: 'center', charSpace: 1 })
+    this.textoCentralizado('SINISTRALIDADE', cx, y + 66, 1)
 
     this.ink(status.cor)
     this.font('bold', 25)
@@ -546,8 +562,8 @@ class Relatorio {
 
     this.ink(status.cor)
     this.font('bold', 9.5)
-    doc.text(status.linhas[0], cx, y + 130, { align: 'center', charSpace: 0.5 })
-    doc.text(status.linhas[1], cx, y + 143, { align: 'center', charSpace: 0.5 })
+    this.textoCentralizado(status.linhas[0], cx, y + 130, 0.5)
+    this.textoCentralizado(status.linhas[1], cx, y + 143, 0.5)
   }
 
   /** Régua de 4 KPIs da capa (eventos, vidas, internações, saúde mental). */
@@ -2028,9 +2044,9 @@ class Relatorio {
     const principaisAtend = this.input.mesesAtendimento.filter((m) => m.pct >= 5).slice(0, 3)
     if (principaisAtend.length > 0) {
       this.nota(
-        `Competência é o mês em que a operadora pagou os eventos, não o mês do atendimento. Os eventos pagos neste período foram realizados em ${principaisAtend
-          .map((m) => `${fmtCompExt(m.mes).toLowerCase()} (${pct(m.pct)})`)
-          .join(', ')}.`,
+        `Competência é o mês em que a operadora pagou os eventos, não o mês do atendimento. Os eventos pagos neste período foram realizados em ${listaPtBR(
+          principaisAtend.map((m) => `${fmtCompExt(m.mes).toLowerCase()} (${pct(m.pct)})`),
+        )}.`,
       )
     }
     this.kpis([

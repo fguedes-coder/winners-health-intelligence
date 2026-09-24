@@ -96,6 +96,11 @@ const RE_COMPARACAO_TEMPORAL =
   /(?:compet[êe]ncia|m[êe]s|per[íi]odo)\s+anterior|sem\s+varia[çc][ãa]o|\best[áa]vel\b|\bestabilidade\b|\bcresceu\b|\baumentou\b|\breduziu\b|\bcaiu\b/i
 // "top 10% das vidas": o payload tem os 10 maiores beneficiários (contagem),
 // não o top 10% — o modelo confundiu os dois em ago/26.
+// Recomendar corte de exames contradiz a recomendação de ampliar prevenção e
+// rastreamento das Conclusões — a IA de ago/26 sugeriu "auditoria de exames"
+// quando o que liderava o custo era laboratório de rotina.
+const RE_CORTE_EXAMES =
+  /(?:auditori[ao]s?|reduzir|redu[çc][ãa]o|cortar|corte|revisar\s+a\s+necessidade)[^.\n]{0,40}?\bexames?\b|\bexames?\s+(?:redundantes|desnecess[áa]rios)/i
 const RE_TOP_PCT_VIDAS = /\btop\s+\d+(?:[.,]\d+)?\s*%\s+(?:das|dos)\s+(?:vidas|benefici[áa]rios)/i
 
 export type ResultadoValidacao = {
@@ -158,7 +163,14 @@ export function validarAnaliseIA(
     )
   }
 
-  // 5) projeção sem série histórica suficiente
+  // 5) recomendação de cortar exames (contradiz a prevenção)
+  if (RE_CORTE_EXAMES.test(texto)) {
+    violacoes.push(
+      'recomenda reduzir ou auditar exames; exames são majoritariamente preventivos e o relatório recomenda ampliar o rastreamento',
+    )
+  }
+
+  // 6) projeção sem série histórica suficiente
   if (fatos.competencias < MIN_COMPETENCIAS_PROJECAO) {
     if (RE_PROJECAO.test(texto)) {
       violacoes.push(
