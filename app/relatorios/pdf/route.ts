@@ -13,7 +13,18 @@ import { resumirSaudeMental } from '@/lib/saude-mental-agg'
 import { criarAnonimizador, normalizarModoPrivacidade } from '@/lib/anonimizar'
 import { getBeneficiaryPanorama } from '@/lib/beneficiary-panorama'
 import { getRelatorioConfig } from '../actions'
-import { gerarRelatorioPdf, type MiniResumoBeneficiario } from '@/lib/pdf/relatorio-pdf'
+import { createClient } from '@/lib/supabase/server'
+import { contentDisposition, nomeRelatorio, periodoPorExtenso } from '@/lib/pdf/nome-arquivo'
+import {
+  gerarRelatorioPdf,
+  type BaseVidasResumo,
+  type MesAtendimento,
+  type MiniResumoBeneficiario,
+  type PontoHistorico,
+} from '@/lib/pdf/relatorio-pdf'
+
+/** Janela da série histórica de sinistralidade (padrão de mercado p/ reajuste). */
+const JANELA_HISTORICO = 12
 
 // Geração de PDF nativo (jsPDF) — requer runtime Node.js.
 export const runtime = 'nodejs'
@@ -49,17 +60,6 @@ async function assetRemotoDataUrl(url: string | null): Promise<string | null> {
   }
 }
 
-function slugify(s: string): string {
-  return (
-    s
-      .normalize('NFD')
-      .replace(/[\u0300-\u036f]/g, '')
-      .replace(/[^a-zA-Z0-9]+/g, '-')
-      .replace(/^-+|-+$/g, '')
-      .toLowerCase() || 'cliente'
-  )
-}
-
 export async function GET(request: NextRequest) {
   const auth = await requireAuthApi()
   if (auth instanceof NextResponse) return auth
@@ -73,8 +73,11 @@ export async function GET(request: NextRequest) {
 
   const modo = normalizarModoPrivacidade(sp.get('privacidade'))
 
-  const [data, painel, config, dataset] = await Promise.all([
+  const [data, carteiraInteira, painel, config, dataset] = await Promise.all([
     getDashboardData({ mes }),
+    // Sem filtro: fonte da série histórica. Mesmo cálculo do recorte, então o
+    // mês de referência na série bate com o número do resto do relatório.
+    getDashboardData({ mes: [] }),
     getPainel({ mes }),
     getRelatorioConfig(),
     getWinnersDataset(),
@@ -104,7 +107,59 @@ export async function GET(request: NextRequest) {
     competencias[competencias.length - 1] ?? data.competenciaAtual ?? null
   const competenciaRef = competenciaFim ?? 'período atual'
 
-  const analise = gerarAnaliseExecutiva(dataDoc, competenciaRef)
+  // Série histórica até a competência de referência. Um mês isolado não diz se
+  // a carteira está saudável: em 2026, ago/26 teve 23,6% e jun/26, 95%.
+  const historico: PontoHistorico[] = carteiraInteira.resumoCompetencia
+    .filter(
+      (r) =>
+        (!competenciaFim || r.competencia <= competenciaFim) &&
+        faturaPorCompetencia[r.competencia] > 0,
+    )
+    .slice(-JANELA_HISTORICO)
+    .map((r) => ({
+      competencia: r.competencia,
+      utilizado: r.valor,
+      fatura: faturaPorCompetencia[r.competencia],
+    }))
+
+  // Competência é o mês de PAGAMENTO do evento pela operadora, não o do
+  // atendimento. Sem esta nota o cliente lê "utilização de agosto" quando os
+  // atendimentos pagos em agosto foram, em sua maioria, de junho.
+  const mesSetAtend = new Set(mes)
+  const porMesAtendimento = new Map<string, number>()
+  let comData = 0
+  for (const e of eventos) {
+    if (mesSetAtend.size && !(e.competencia && mesSetAtend.has(e.competencia))) continue
+    const m = e.dataAtendimento?.slice(0, 7)
+    if (!m || !/^\d{4}-\d{2}$/.test(m)) continue
+    porMesAtendimento.set(m, (porMesAtendimento.get(m) ?? 0) + 1)
+    comData++
+  }
+  const mesesAtendimento: MesAtendimento[] = [...porMesAtendimento.entries()]
+    .map(([m, n]) => ({ mes: m, pct: comData ? (n / comData) * 100 : 0 }))
+    .sort((a, b) => b.pct - a.pct)
+
+  // Composição da base de vidas da competência de referência. O KPI "vidas
+  // ativas" vem da fatura; titulares/dependentes do resumo são de quem USOU o
+  // plano — misturar os dois fez o relatório de ago/26 dizer "128 vidas: 63
+  // titulares e 21 dependentes" (63 + 21 = 84, as vidas com utilização).
+  let baseVidas: BaseVidasResumo | null = null
+  if (competenciaFim) {
+    const supabase = await createClient()
+    const { data: vidasRows } = await supabase
+      .from('beneficiario_vidas')
+      .select('tipo')
+      .eq('competencia', competenciaFim)
+      .range(0, 9999)
+    const linhas = (vidasRows ?? []) as { tipo: string | null }[]
+    if (linhas.length > 0) {
+      const tit = linhas.filter((l) => /^TIT/i.test(l.tipo ?? '')).length
+      const dep = linhas.filter((l) => /^DEP/i.test(l.tipo ?? '')).length
+      baseVidas = { competencia: competenciaFim, total: linhas.length, titulares: tit, dependentes: dep }
+    }
+  }
+
+  const analise = gerarAnaliseExecutiva(dataDoc, competenciaRef, historico)
 
   // Análise consultiva Winners Decide IA (mesma lógica do endpoint /analyze:
   // OpenAI quando há chave, senão determinística). Sempre sobre dados anonimizados.
@@ -162,6 +217,12 @@ export async function GET(request: NextRequest) {
     assetRemotoDataUrl(config.logoClienteUrl),
   ])
 
+  const nomeDocumento = nomeRelatorio(
+    config.clienteNome ?? 'Cliente',
+    periodoPorExtenso(competenciaInicio, competenciaFim),
+    modo !== 'anonimizado',
+  )
+
   const pdf = gerarRelatorioPdf({
     data: dataDoc,
     painel,
@@ -175,17 +236,17 @@ export async function GET(request: NextRequest) {
     competenciaInicio,
     competenciaFim,
     competenciasSelecionadas: competencias,
+    historico,
+    mesesAtendimento,
+    baseVidas,
+    tituloDocumento: nomeDocumento,
     assets: { shield, clienteLogo },
   })
-
-  const cliente = slugify(config.clienteNome ?? 'cliente')
-  const sufixo = modo === 'anonimizado' ? '-anonimizado' : ''
-  const nomeArquivo = `relatorio-executivo-${cliente}${sufixo}.pdf`
 
   return new Response(pdf, {
     headers: {
       'Content-Type': 'application/pdf',
-      'Content-Disposition': `inline; filename="${nomeArquivo}"`,
+      'Content-Disposition': contentDisposition(`${nomeDocumento}.pdf`),
       'Cache-Control': 'no-store',
     },
   })

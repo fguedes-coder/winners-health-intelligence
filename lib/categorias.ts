@@ -96,6 +96,15 @@ const RE_TAXA =
 const RE_PROCEDIMENTO =
   /CIRURG|PROCEDIMENT|ANGIOPL|TROMBECTOMIA|FASCIOTOMIA|COLECISTECT|RESSEC|EXERESE|BIOPSIA.*CIR|TRANSPLANT|CATETERISMO|HEMODIALISE|DIALISE|ARTROSCOP|VIDEOLAPAROSCOP/i
 
+// Grupos estatísticos da SulAmérica que são exame diagnóstico: 2228/2221
+// laboratório e citopatologia, 2132/2136/2990 ultrassonografia, 2134/2137
+// radiologia, 2922 métodos gráficos (ECG, bioimpedância). Usados só quando a
+// descrição não casou com nenhuma regra: o nome do analito ("FERRITINA",
+// "TSH", "HOMOCISTEINA") não diz que é exame, e sem este fallback esses
+// eventos caíam em "Demais Utilizações" — em ago/2026, a maior categoria da
+// carteira era, na prática, laboratório.
+const GRUPOS_EXAME = new Set(['2221', '2228', '2132', '2134', '2136', '2137', '2922', '2990'])
+
 // Subcategoria de Saúde Mental
 export function subcategoriaSaudeMental(texto: string): string {
   const t = (texto || '').toUpperCase()
@@ -219,5 +228,6 @@ export function classificarEvento(e: ClassificavelInput): CategoriaGerencial {
   if (RE_MATERIAL.test(texto)) return 'Materiais'
   if (RE_TAXA.test(texto)) return 'Taxas Hospitalares'
   if (RE_PROCEDIMENTO.test(texto)) return 'Procedimentos'
+  if (GRUPOS_EXAME.has(String(e.grupoEstatistico ?? '').trim())) return 'Exames'
   return 'Demais Utilizações'
 }

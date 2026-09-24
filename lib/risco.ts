@@ -569,5 +569,14 @@ export function gerarRecomendacaoConsolidada(params: {
         ? acoes[0]
         : `${acoes.slice(0, -1).join(', ')} e ${acoes[acoes.length - 1]}`
 
-  return `Beneficiário apresenta ${meta.label.toLowerCase()}${impacto}. Recomenda-se ${listaAcoes} como frentes prioritárias de intervenção.`
+  // O fecho acompanha a faixa: "frentes prioritárias de intervenção" num
+  // beneficiário de baixo risco fazia o texto contradizer o próprio rótulo.
+  const fecho =
+    params.faixa === 'alto' || params.faixa === 'critico'
+      ? `Recomenda-se priorizar ${listaAcoes} como frente de intervenção.`
+      : params.faixa === 'moderado'
+        ? `Recomenda-se ${listaAcoes}, com acompanhamento periódico.`
+        : `O risco assistencial não indica intervenção prioritária; recomenda-se ${listaAcoes} dentro da rotina de gestão da carteira.`
+
+  return `Beneficiário apresenta ${meta.label.toLowerCase()}${impacto}. ${fecho}`
 }
