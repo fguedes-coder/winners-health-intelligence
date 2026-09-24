@@ -126,7 +126,7 @@ function fmtCompShort(yyyymm: string): string {
 function pct(v: number | null): string {
   return v === null
     ? '—'
-    : `${v.toLocaleString('pt-BR', { maximumFractionDigits: 1 })}%`
+    : `${v.toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%`
 }
 
 /** Formatação compacta para eixos de gráfico (R$ 1,2 mi / R$ 340 mil). */
@@ -148,6 +148,20 @@ export type MiniResumoBeneficiario = {
   resumo: string
 }
 
+/** Competência da série histórica (utilização e fatura do mês). */
+export type PontoHistorico = { competencia: string; utilizado: number; fatura: number }
+
+/** Participação de um mês de ATENDIMENTO nos eventos pagos no recorte. */
+export type MesAtendimento = { mes: string; pct: number }
+
+/** Composição da base de vidas da competência de referência. */
+export type BaseVidasResumo = {
+  competencia: string
+  total: number
+  titulares: number
+  dependentes: number
+}
+
 export type RelatorioPdfInput = {
   data: DashboardData
   painel: PainelData | null
@@ -164,6 +178,16 @@ export type RelatorioPdfInput = {
   competenciaInicio: string | null
   competenciaFim: string | null
   competenciasSelecionadas: string[]
+  /** Série até a competência de referência (até 12 meses com fatura). */
+  historico: PontoHistorico[]
+  /** Início do ano contratual (aniversário), quando informado. */
+  inicioAnoContratual?: string | null
+  /** Meses de atendimento dos eventos pagos no recorte, do maior para o menor. */
+  mesesAtendimento: MesAtendimento[]
+  /** Base de vidas da competência de referência (null se não importada). */
+  baseVidas: BaseVidasResumo | null
+  /** Título do documento (metadado do PDF; aparece na aba do navegador). */
+  tituloDocumento?: string
   /** Imagens em data URL (base64) resolvidas no servidor. */
   assets: {
     shield?: string | null
@@ -194,6 +218,9 @@ class Relatorio {
       orientation: 'portrait',
       compress: true,
     })
+    if (input.tituloDocumento) {
+      this.doc.setProperties({ title: input.tituloDocumento })
+    }
     this.clienteNome = input.config.clienteNome?.trim() || 'Empresa Cliente'
     this.anonimizado = input.modo === 'anonimizado'
     const { competenciaInicio: ini, competenciaFim: fim } = input
@@ -1269,6 +1296,9 @@ class Relatorio {
           .replace(/^\d+\.\s*/, '')
           .trim()
         this.y += 6
+        // Mantém o título junto de algumas linhas do texto seguinte (a
+        // "Mensagem para Diretoria" de ago/26 deixou 3 linhas soltas numa página).
+        this.ensure(110)
         this.subTitle(t)
         continue
       }
@@ -1402,7 +1432,15 @@ class Relatorio {
         : `${sm.tendenciaPct > 0 ? '+' : ''}${sm.tendenciaPct.toLocaleString('pt-BR', { maximumFractionDigits: 1 })}%`
     this.kpis([
       { label: 'Eventos de saúde mental', valor: sm.eventos.toLocaleString('pt-BR'), destaque: true },
-      { label: 'Beneficiários monitorados', valor: sm.beneficiarios.toLocaleString('pt-BR'), destaque: true },
+      {
+        label: 'Beneficiários monitorados',
+        // Contagem abaixo de K quase identifica a pessoa numa carteira pequena.
+        valor:
+          this.anonimizado && sm.beneficiarios > 0 && sm.beneficiarios < K_ANONIMATO
+            ? `menos de ${K_ANONIMATO}`
+            : sm.beneficiarios.toLocaleString('pt-BR'),
+        destaque: true,
+      },
       { label: 'Utilizações em psicologia', valor: sm.psicologia.toLocaleString('pt-BR') },
       { label: 'Utilizações em psiquiatria', valor: sm.psiquiatria.toLocaleString('pt-BR') },
       { label: 'Custo total associado', valor: formatBRL(sm.custo), destaque: true },
@@ -1410,7 +1448,15 @@ class Relatorio {
       { label: 'Tendência de custo', valor: tend },
     ])
 
-    if (sm.top.length > 0) {
+    // Saúde mental é dado sensível (LGPD, art. 11). No modo anonimizado a
+    // seção fica só no agregado: os pseudônimos (RISCO-001…) são os mesmos em
+    // todo o documento, e uma lista individual aqui permitia cruzar quem faz
+    // tratamento psicológico com o ranking de custo das outras seções.
+    if (this.anonimizado && sm.top.length > 0) {
+      this.nota(
+        'Por se tratar de dado sensível, esta seção apresenta apenas indicadores agregados, sem identificação individual — nem por pseudônimo.',
+      )
+    } else if (sm.top.length > 0) {
       this.subTitle('Top beneficiários — Saúde Mental')
       this.table(
         [
@@ -1490,7 +1536,7 @@ class Relatorio {
         l: 'com potencial de economia alto',
       },
       {
-        v: `${iv.pctCustoPrioritario.toFixed(1)}%`,
+        v: pct(iv.pctCustoPrioritario),
         l: 'do custo concentrado nesses casos',
       },
     ]
@@ -1507,14 +1553,23 @@ class Relatorio {
     this.y = y0 + cardH + 16
 
     // Indicador estratégico: Exposição Financeira Prioritária
+    // Só entram na tabela vidas de fato prioritárias (P1/P2). Sem nenhuma, a
+    // seção dizia "nenhuma vida prioritária" e listava um "Top 5 prioritários"
+    // inteiro em P4 – Baixo Risco.
+    const prioritariosReais = iv.prioritarios.filter(
+      (b) => b.prioridadeNivel === 'P1' || b.prioridadeNivel === 'P2',
+    )
     this.subTitle('Exposição Financeira Prioritária')
     this.paragraph(
-      `${iv.pctCustoPrioritario.toFixed(1)}% do custo da carteira (${formatBRL(iv.valorPrioritario)}) está concentrado em beneficiários classificados como Prioridade 1 ou Prioridade 2 — os casos de maior retorno para ações de gestão assistencial.`,
+      prioritariosReais.length > 0
+        ? `${pct(iv.pctCustoPrioritario)} do custo da carteira (${formatBRL(iv.valorPrioritario)}) está concentrado em beneficiários classificados como Prioridade 1 ou Prioridade 2 — os casos de maior retorno para ações de gestão assistencial.`
+        : 'Nenhum beneficiário foi classificado como Prioridade 1 ou Prioridade 2 no período; não há custo concentrado em casos de intervenção prioritária.',
     )
 
-    // Tabela dos 5 prioritários com selos coloridos
-    this.subTitle('Top 5 beneficiários prioritários')
-    this.tabelaPrioritarios(iv.prioritarios)
+    if (prioritariosReais.length > 0) {
+      this.subTitle('Beneficiários prioritários (P1 e P2)')
+      this.tabelaPrioritarios(prioritariosReais)
+    }
 
     // Distribuições sobre toda a carteira
     this.subTitle('Distribuição por Prioridade de Intervenção')
@@ -1532,9 +1587,9 @@ class Relatorio {
 
     // Mini-resumos dos maiores ofensores financeiros (Top 3 por custo)
     if (miniResumos.length > 0) {
-      this.subTitle('Maiores ofensores financeiros — leitura rápida')
+      this.subTitle('Maiores custos individuais — leitura rápida')
       this.paragraph(
-        'Síntese individual dos três beneficiários de maior custo, para leitura executiva sem abrir o Panorama do Beneficiário.',
+        'Síntese individual dos três beneficiários de maior custo no período. Custo alto não significa, por si, risco alto: a prioridade de intervenção considera também o padrão de utilização.',
         { muted: true, size: 9 },
       )
       for (const m of miniResumos) this.cardMiniResumo(m)
@@ -1583,7 +1638,7 @@ class Relatorio {
       PRIORIDADE_COR[m.prioridadeNivel] ?? BLUE,
     )
     cx = this.chip(
-      `Risco: ${m.riscoFuturo}`,
+      `Risco futuro: ${m.riscoFuturo}`,
       cx,
       cy,
       RISCO_FUTURO_COR[m.riscoFuturo] ?? MUTED,
@@ -1755,7 +1810,7 @@ class Relatorio {
       this.ink(INK)
       this.font('normal', 8.5)
       doc.text(
-        `${d.vidas} vida(s) · ${d.pctCusto.toFixed(1)}% custo`,
+        `${d.vidas} vida(s) · ${pct(d.pctCusto)} do custo`,
         PAGE_W - MARGIN,
         this.y + 12,
         { align: 'right' },
@@ -1864,7 +1919,7 @@ class Relatorio {
     // etiqueta de origem da análise
     const origem =
       analiseIA.fonte === 'ia'
-        ? 'Análise generativa (OpenAI) sobre dados anonimizados da carteira.'
+        ? 'Análise generativa sobre dados anonimizados da carteira, validada automaticamente contra os indicadores do relatório.'
         : 'Análise determinística baseada nos mesmos dados da plataforma.'
     this.ink([120, 130, 150])
     this.font('normal', 8.5)
@@ -1922,7 +1977,7 @@ class Relatorio {
 
   // ---- montagem ------------------------------------------------------------
   build(): ArrayBuffer {
-    const { data, analise, resumoRadar, painel } = this.input
+    const { data, analise, resumoRadar, painel, historico, baseVidas } = this.input
     const k = data.kpis
     const sinistralidade = data.evolucaoSinistralidade.at(-1)?.valor ?? null
 
@@ -1970,6 +2025,14 @@ class Relatorio {
     this.newContentPage()
     this.sectionTitle('1', 'Resumo Executivo')
     this.paragraph(analise.resumoExecutivo)
+    const principaisAtend = this.input.mesesAtendimento.filter((m) => m.pct >= 5).slice(0, 3)
+    if (principaisAtend.length > 0) {
+      this.nota(
+        `Competência é o mês em que a operadora pagou os eventos, não o mês do atendimento. Os eventos pagos neste período foram realizados em ${principaisAtend
+          .map((m) => `${fmtCompExt(m.mes).toLowerCase()} (${pct(m.pct)})`)
+          .join(', ')}.`,
+      )
+    }
     this.kpis([
       { label: 'Valor utilizado', valor: formatBRL(k.valorUtilizado), destaque: true },
       { label: 'Sinistralidade', valor: pct(sinistralidade), destaque: true },
@@ -2007,31 +2070,66 @@ class Relatorio {
         ],
         ['Subestipulantes', String(k.subestipulantes)],
         ['Planos contratados', data.opcoes.planos.length ? data.opcoes.planos.join(', ') : '—'],
-        ['Vidas ativas (cadastro)', k.vidasAtivas?.toLocaleString('pt-BR') ?? 'Não informado'],
-        ['Titulares', k.titulares.toLocaleString('pt-BR')],
-        ['Dependentes', k.dependentes.toLocaleString('pt-BR')],
+        ['Vidas ativas (fatura)', k.vidasAtivas?.toLocaleString('pt-BR') ?? 'Não informado'],
+        ...(baseVidas
+          ? [
+              [
+                `Base de vidas (${fmtCompExt(baseVidas.competencia).toLowerCase()})`,
+                `${baseVidas.total.toLocaleString('pt-BR')} — ${baseVidas.titulares.toLocaleString('pt-BR')} titulares e ${baseVidas.dependentes.toLocaleString('pt-BR')} dependentes`,
+              ],
+            ]
+          : []),
+        [
+          'Vidas com utilização',
+          `${k.vidasComUtilizacao.toLocaleString('pt-BR')} — ${k.titulares.toLocaleString('pt-BR')} titulares e ${k.dependentes.toLocaleString('pt-BR')} dependentes`,
+        ],
       ],
     )
+    if (baseVidas && k.vidasAtivas !== null && baseVidas.total !== k.vidasAtivas) {
+      this.nota(
+        `A fatura cobra ${k.vidasAtivas.toLocaleString('pt-BR')} vidas e a base de vidas do mês lista ${baseVidas.total.toLocaleString('pt-BR')}. Os indicadores por vida usam o número da fatura.`,
+      )
+    }
 
     if (data.subestipulanteResumo.length > 0) {
       this.subTitle('Resumo por subestipulante')
+      const subs = data.subestipulanteResumo.slice(0, 12)
+      // Com a mesma razão social em todas, a coluna só repete o nome e não
+      // distingue nada — o que separa as subestipulantes é o código.
+      const razoes = new Set(subs.map((s) => s.razao.trim().toUpperCase()))
+      const razaoUnica = razoes.size === 1 ? subs[0].razao : null
+      // "Vidas" aqui são as vidas COM UTILIZAÇÃO e o custo é por usuário.
+      // Rotular como "Vidas"/"Custo/vida" contradizia o custo médio por vida
+      // ativa do resumo (R$ 155 contra R$ 148–347 em ago/26).
+      const cols: Col[] = razaoUnica
+        ? [
+            { header: 'Código', width: 110 },
+            { header: 'Vidas c/ uso', width: 90, align: 'right' },
+            { header: 'Eventos', width: 80, align: 'right' },
+            { header: 'Valor', width: 110, align: 'right' },
+            { header: 'Custo/usuário', width: USABLE_W - 390, align: 'right' },
+          ]
+        : [
+            { header: 'Código', width: 60 },
+            { header: 'Subestipulante', width: 165 },
+            { header: 'Vidas c/ uso', width: 65, align: 'right' },
+            { header: 'Eventos', width: 55, align: 'right' },
+            { header: 'Valor', width: 80, align: 'right' },
+            { header: 'Custo/usuário', width: USABLE_W - 425, align: 'right' },
+          ]
       this.table(
-        [
-          { header: 'Código', width: 70 },
-          { header: 'Subestipulante', width: 175 },
-          { header: 'Vidas', width: 50, align: 'right' },
-          { header: 'Eventos', width: 55, align: 'right' },
-          { header: 'Valor', width: 90, align: 'right' },
-          { header: 'Custo/vida', width: USABLE_W - 440, align: 'right' },
-        ],
-        data.subestipulanteResumo.slice(0, 12).map((s) => [
+        cols,
+        subs.map((s) => [
           s.codigo || '—',
-          s.razao,
+          ...(razaoUnica ? [] : [s.razao]),
           String(s.vidasUtil),
           String(s.eventos),
           formatBRL(s.valor),
           formatBRL(s.custoVida),
         ]),
+      )
+      this.nota(
+        `${razaoUnica ? `Todas as subestipulantes pertencem a ${razaoUnica} e se distinguem pelo código. ` : ''}Vidas c/ uso são as que tiveram ao menos um evento no período; o custo por usuário divide o valor por elas e, por isso, é maior que o custo médio por vida ativa do resumo executivo.`,
       )
     }
 
@@ -2069,13 +2167,55 @@ class Relatorio {
     this.newContentPage()
     this.sectionTitle('4', 'Análise de Sinistralidade')
     if (data.sinistralidadeDisponivel && data.evolucaoSinistralidade.length > 0) {
+      // Série até a competência de referência, não só o recorte: um ponto
+      // isolado não mostra tendência e esconde meses críticos anteriores.
+      const serie =
+        historico.length > 1
+          ? historico.map((h) => ({
+              mes: fmtCompShort(h.competencia),
+              valor: (h.utilizado / h.fatura) * 100,
+            }))
+          : data.evolucaoSinistralidade
+      const inicioAno = this.input.inicioAnoContratual ?? null
       this.paragraph(
-        'Evolução da sinistralidade (relação entre valor utilizado e receita/fatura) ao longo das competências. O ponto de equilíbrio técnico situa-se em torno de 70% a 75%.',
+        historico.length > 1
+          ? inicioAno
+            ? `Evolução mensal da sinistralidade (valor utilizado ÷ fatura) no ano contratual, desde o aniversário do contrato em ${fmtCompExt(inicioAno).toLowerCase()}. O ponto de equilíbrio técnico situa-se em torno de 70% a 75%.`
+            : `Evolução mensal da sinistralidade (valor utilizado ÷ fatura) nas ${historico.length} competências até ${this.periodoLabel.toLowerCase()}. O ponto de equilíbrio técnico situa-se em torno de 70% a 75%.`
+          : inicioAno
+            ? 'Sinistralidade da competência (valor utilizado ÷ fatura). É a primeira competência do ano contratual; o acumulado passa a ser apresentado a partir do mês seguinte. O ponto de equilíbrio técnico situa-se em torno de 70% a 75%.'
+            : 'Sinistralidade da competência (valor utilizado ÷ fatura). O ponto de equilíbrio técnico situa-se em torno de 70% a 75%. Não há competências anteriores com fatura para compor a série.',
       )
-      const comprimidos = this.lineChartSinistralidade(data.evolucaoSinistralidade)
+      const comprimidos = this.lineChartSinistralidade(serie)
       if (comprimidos > 0) {
         this.chartNote(
           'Competências com sinistralidade excepcionalmente elevada foram comprimidas ao teto de 200% para melhor leitura visual; o valor real está indicado sobre o ponto (marcado em âmbar).',
+        )
+      }
+      if (historico.length > 1) {
+        const totU = historico.reduce((a, h) => a + h.utilizado, 0)
+        const totF = historico.reduce((a, h) => a + h.fatura, 0)
+        this.table(
+          [
+            { header: 'Competência', width: 130 },
+            { header: 'Utilizado', width: 120, align: 'right' },
+            { header: 'Fatura', width: 120, align: 'right' },
+            { header: 'Sinistralidade', width: USABLE_W - 370, align: 'right' },
+          ],
+          [
+            ...historico.map((h) => [
+              fmtCompExt(h.competencia),
+              formatBRL(h.utilizado),
+              formatBRL(h.fatura),
+              pct((h.utilizado / h.fatura) * 100),
+            ]),
+            [
+              inicioAno ? 'Acumulado do ano contratual' : 'Acumulado',
+              formatBRL(totU),
+              formatBRL(totF),
+              pct((totU / totF) * 100),
+            ],
+          ],
         )
       }
     } else {
@@ -2090,7 +2230,15 @@ class Relatorio {
     this.paragraph(
       'Comparativo entre valor utilizado e fatura por competência e composição da utilização por categoria assistencial.',
     )
-    if (data.utilizacaoMensal.length > 0) {
+    if (historico.length > 1) {
+      this.groupedBarsUtilizacao(
+        historico.map((h) => ({
+          mes: fmtCompShort(h.competencia),
+          utilizado: h.utilizado,
+          fatura: h.fatura,
+        })),
+      )
+    } else if (data.utilizacaoMensal.length > 0) {
       this.groupedBarsUtilizacao(data.utilizacaoMensal)
     }
     // Categorias GERENCIAIS (12 grupos fixos), não as descrições de
@@ -2131,7 +2279,11 @@ class Relatorio {
         valor: k.eventos > 0 ? formatBRL(k.valorUtilizado / k.eventos) : '—',
       },
     ])
-    if (data.tipoUtilizacao.length > 0) {
+    // Mesma lista completa da seção 5. A tabela antiga (tipoUtilizacao) juntava
+    // tudo abaixo do 5º lugar em "Demais" — e o mesmo valor saía como "Taxas
+    // Hospitalares" numa página e "Demais" na seguinte.
+    const composicao = [...data.categoriasGerenciais].sort((a, b) => b.valor - a.valor)
+    if (composicao.length > 0) {
       this.subTitle('Composição por tipo de utilização')
       this.table(
         [
@@ -2141,12 +2293,12 @@ class Relatorio {
           { header: 'Valor', width: 110, align: 'right' },
           { header: '% valor', width: USABLE_W - 410, align: 'right' },
         ],
-        data.tipoUtilizacao.map((t) => [
-          t.tipo,
-          String(t.eventos),
-          pct(t.pctEventos),
-          formatBRL(t.valor),
-          pct(t.pctValor),
+        composicao.map((c) => [
+          c.nome,
+          String(c.eventos),
+          pct(k.eventos > 0 ? (c.eventos / k.eventos) * 100 : 0),
+          formatBRL(c.valor),
+          pct(c.pct),
         ]),
       )
       this.nota(
@@ -2242,7 +2394,11 @@ class Relatorio {
           resumoRadar.total > 0 ? pct((d.valor / resumoRadar.total) * 100) : '—',
         ]),
       )
-      this.subTitle('Beneficiários prioritários')
+      this.subTitle(
+        resumoRadar.emRisco > 0
+          ? 'Beneficiários prioritários'
+          : 'Maiores scores de risco (nenhum em faixa alta ou crítica)',
+      )
       this.table(
         [
           { header: '#', width: 28, align: 'right' },
@@ -2260,6 +2416,9 @@ class Relatorio {
           formatBRL(b.valorTotal),
           pct(b.participacaoPct),
         ]),
+      )
+      this.nota(
+        'A faixa do Radar mede o risco assistencial atual, pelos eventos do período. O "risco futuro" da seção de intervenção é uma projeção em outra escala — por isso o mesmo beneficiário pode estar em faixa baixa aqui e com risco futuro moderado lá.',
       )
     } else {
       this.vazio('Sem dados suficientes para estratificação de risco no período.')

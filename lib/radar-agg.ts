@@ -578,7 +578,7 @@ function montarPlanoAcao(
 
   const conclusao =
     beneficiariosPrioritarios > 0
-      ? `A análise identificou ${beneficiariosPrioritarios} beneficiário(s) em monitoramento prioritário, representando ${ctx.total > 0 ? ((ctx.impactoFinanceiro / (valorTotalCarteira || 1)) * 100).toFixed(1) : '0'}% dos custos assistenciais da carteira. Recomenda-se a implementação das ações preventivas sugeridas, com foco em ${listaAcoes}. O potencial impacto financeiro monitorado é de ${formatMoeda(ctx.impactoFinanceiro)}, com oportunidade estimada de economia de ${formatMoeda(economiaPotencial)}.`
+      ? `A análise identificou ${beneficiariosPrioritarios} beneficiário(s) em monitoramento prioritário, representando ${ctx.total > 0 ? ((ctx.impactoFinanceiro / (valorTotalCarteira || 1)) * 100).toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 }) : '0'}% dos custos assistenciais da carteira. Recomenda-se a implementação das ações preventivas sugeridas, com foco em ${listaAcoes}. O potencial impacto financeiro monitorado é de ${formatMoeda(ctx.impactoFinanceiro)}, com oportunidade estimada de economia de ${formatMoeda(economiaPotencial)}.`
       : 'Sem beneficiários prioritários no período. Manter acompanhamento preventivo de rotina para preservar a sustentabilidade do contrato.'
 
   return {
@@ -884,7 +884,7 @@ function montarResumoOportunidades(d: {
 
   const partes: string[] = []
   partes.push(
-    `${prioritarias} vida(s) concentram prioridade de intervenção (P1+P2), representando ${d.pctCustoPrioritario.toFixed(1)}% do custo assistencial da carteira (${formatMoeda(d.valorPrioritario)}).`,
+    `${prioritarias} vida(s) concentram prioridade de intervenção (P1+P2), representando ${d.pctCustoPrioritario.toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}% do custo assistencial da carteira (${formatMoeda(d.valorPrioritario)}).`,
   )
   if (d.vidasP1 > 0) {
     partes.push(

@@ -26,6 +26,7 @@ import {
   type ModoPrivacidade,
 } from '@/lib/anonimizar'
 import {
+  salvarMesAniversario,
   salvarNomeCliente,
   uploadLogoCliente,
   removerLogoCliente,
@@ -40,6 +41,9 @@ export function GerarPdfPanel({
   mes?: string[]
 }) {
   const [nome, setNome] = useState(config.clienteNome ?? '')
+  const [mesAniv, setMesAniv] = useState<string>(
+    config.mesAniversario ? String(config.mesAniversario) : '',
+  )
   const [modo, setModo] = useState<ModoPrivacidade>('nominal')
   const [logoUrl, setLogoUrl] = useState(config.logoClienteUrl)
   const [msg, setMsg] = useState<string | null>(null)
@@ -47,6 +51,17 @@ export function GerarPdfPanel({
   const [salvando, startSalvar] = useTransition()
   const [enviando, setEnviando] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
+
+  function onMesAniversario(valor: string) {
+    setMesAniv(valor)
+    setMsg(null)
+    setErro(null)
+    startSalvar(async () => {
+      const r = await salvarMesAniversario(valor ? Number(valor) : null)
+      if (r.ok) setMsg('Mês de aniversário salvo.')
+      else setErro(r.error ?? 'Falha ao salvar.')
+    })
+  }
 
   function salvarNome() {
     setMsg(null)
@@ -129,6 +144,30 @@ export function GerarPdfPanel({
                 {salvando ? <Loader2 className="size-4 animate-spin" /> : 'Salvar'}
               </Button>
             </div>
+          </div>
+
+          {/* Aniversário do contrato */}
+          <div className="flex flex-col gap-2">
+            <label htmlFor="mes-aniversario" className="text-sm font-medium text-foreground">
+              Mês de aniversário do contrato
+            </label>
+            <select
+              id="mes-aniversario"
+              value={mesAniv}
+              onChange={(e) => onMesAniversario(e.target.value)}
+              disabled={salvando}
+              className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+            >
+              <option value="">Não informado (acumulado dos últimos 12 meses)</option>
+              {['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'].map((m, i) => (
+                <option key={m} value={String(i + 1)}>
+                  {m}
+                </option>
+              ))}
+            </select>
+            <p className="text-xs text-muted-foreground">
+              A sinistralidade acumulada do relatório é contada a partir deste mês.
+            </p>
           </div>
 
           {/* Logo do cliente */}

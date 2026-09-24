@@ -89,6 +89,14 @@ const PADROES_CONTAGEM: {
 const RE_PROJECAO =
   /(?:proje[çc][ãa]o|projetad[ao]s?|tend[êe]ncia\s+(?:projetada|estimada)|cen[áa]rio\s+projetado|estimativa\s+para\s+os?\s+pr[óo]ximos)[^.\n]{0,70}?\d+(?:[.,]\d+)?\s*%/i
 const RE_REAJUSTE = /reajuste[^.\n]{0,60}?\d+(?:[.,]\d+)?\s*%/i
+// Comparação com período anterior — impossível com uma única competência. O
+// relatório de ago/26 saiu com "sinistralidade estável, sem variação em
+// relação à competência anterior" analisando só agosto.
+const RE_COMPARACAO_TEMPORAL =
+  /(?:compet[êe]ncia|m[êe]s|per[íi]odo)\s+anterior|sem\s+varia[çc][ãa]o|\best[áa]vel\b|\bestabilidade\b|\bcresceu\b|\baumentou\b|\breduziu\b|\bcaiu\b/i
+// "top 10% das vidas": o payload tem os 10 maiores beneficiários (contagem),
+// não o top 10% — o modelo confundiu os dois em ago/26.
+const RE_TOP_PCT_VIDAS = /\btop\s+\d+(?:[.,]\d+)?\s*%\s+(?:das|dos)\s+(?:vidas|benefici[áa]rios)/i
 
 export type ResultadoValidacao = {
   ok: boolean
@@ -136,7 +144,21 @@ export function validarAnaliseIA(
     }
   }
 
-  // 3) projeção sem série histórica suficiente
+  // 3) comparação temporal sem competência anterior no recorte
+  if (fatos.competencias < 2 && RE_COMPARACAO_TEMPORAL.test(texto)) {
+    violacoes.push(
+      'comparação com período anterior, mas o recorte tem uma única competência',
+    )
+  }
+
+  // 4) percentual de vidas inventado a partir da contagem dos 10 maiores
+  if (RE_TOP_PCT_VIDAS.test(texto)) {
+    violacoes.push(
+      '"top N% das vidas" citado; o dado disponível é a participação dos 10 beneficiários de maior custo',
+    )
+  }
+
+  // 5) projeção sem série histórica suficiente
   if (fatos.competencias < MIN_COMPETENCIAS_PROJECAO) {
     if (RE_PROJECAO.test(texto)) {
       violacoes.push(
@@ -159,6 +181,9 @@ export function regraSerieInsuficiente(competencias: number): string {
     `ATENÇÃO — SÉRIE HISTÓRICA INSUFICIENTE: o recorte analisado tem apenas ${competencias} competência(s).`,
     'É PROIBIDO projetar sinistralidade, estimar tendência quantificada ou citar faixas de reajuste.',
     'Onde a projeção seria esperada, escreva explicitamente "série histórica insuficiente para projeção" e trate o período como uma fotografia, não como tendência.',
+    ...(competencias < 2
+      ? ['Também é PROIBIDO comparar com o mês ou a competência anterior e dizer que algo está estável, subiu ou caiu: não há período anterior no recorte.']
+      : []),
   ].join(' ')
 }
 

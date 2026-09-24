@@ -21,6 +21,7 @@ import {
   formatCompetencia,
 } from '@/lib/categorias'
 import { MIN_COMPETENCIAS_PROJECAO } from '@/lib/winners-decide-guardrails'
+import { K_ANONIMATO } from '@/lib/privacidade-clinica'
 import { resumirRadar, type ResumoRadar } from '@/lib/radar-agg'
 
 export type WinnersFiltros = {
@@ -764,6 +765,8 @@ REGRAS OBRIGATÓRIAS
 12. Evite listar indicadores sem interpretação.
 13. Priorize insights sobre números.
 14. Toda conclusão relevante deve citar a evidência utilizada — o número, percentual ou campo do payload que a sustenta (ex.: "internações concentram 83,3% do custo", "custo total de R$ X", "N vidas em risco crítico"). Não faça afirmações sem apoiá-las em dados presentes no payload.
+15. Não afirme estabilidade, variação, crescimento ou queda em relação a competências anteriores quando "competencias_analisadas" for 1 — com uma competência não há comparação possível.
+16. Não qualifique uma utilização como "elevada", "excessiva" ou "dependência" sem uma referência comparativa presente no payload; descreva o dado (ex.: "o pronto-socorro responde por 28,2% do custo em 19 eventos").
 
 FREQUÊNCIA NÃO É IMPACTO FINANCEIRO
 - Nunca conclua que um fator é o principal impacto financeiro apenas pela quantidade de ocorrências.
@@ -778,7 +781,7 @@ Cada categoria em "custo_por_categoria" traz cinco dimensões distintas — trat
 1. Frequência de utilização → campo "ocorrencias".
 2. Custo associado → campo "custo".
 3. Percentual do custo total → campo "pct_custo".
-4. Concentração em poucos beneficiários → campos "beneficiarios" e "custo_medio_por_beneficiario", além do bloco "concentracao_despesas" (top 1%, top 5% e top 10 vidas sobre o custo total).
+4. Concentração em poucos beneficiários → campos "beneficiarios" e "custo_medio_por_beneficiario", além do bloco "concentracao_despesas": top_1pct e top_5pct são PERCENTUAIS das vidas; dez_maiores_beneficiarios_pct_custo refere-se a 10 PESSOAS (uma contagem, não 10% das vidas) — escreva "os 10 beneficiários de maior custo", nunca "o top 10%".
 5. Impacto financeiro potencial → campo "impacto_financeiro_potencial".
 Nunca trate frequência como se fosse custo, nem custo como se fosse concentração. Quando um custo elevado estiver concentrado em poucas vidas (alto custo_medio_por_beneficiario ou alto top_1pct_vidas_pct_custo), destaque isso como risco de concentração.
 
@@ -850,7 +853,7 @@ export type PayloadIA = {
   // Concentração de despesas: quanto do custo total está em poucas vidas.
   concentracao_despesas: {
     vidas_com_custo: number
-    top_10_vidas_pct_custo: number
+    dez_maiores_beneficiarios_pct_custo: number
     top_1pct_vidas_pct_custo: number
     top_5pct_vidas_pct_custo: number
   }
@@ -969,7 +972,7 @@ export function montarPayloadIA(
   const nTop5pct = Math.max(1, Math.round(totalVidasComCusto * 0.05))
   const concentracaoDespesas = {
     vidas_com_custo: totalVidasComCusto,
-    top_10_vidas_pct_custo: pctDoTotal(somaTop(10)),
+    dez_maiores_beneficiarios_pct_custo: pctDoTotal(somaTop(10)),
     top_1pct_vidas_pct_custo: pctDoTotal(somaTop(nTop1pct)),
     top_5pct_vidas_pct_custo: pctDoTotal(somaTop(nTop5pct)),
   }
@@ -1102,7 +1105,7 @@ export function gerarResumoMock(p: PayloadIA): string {
   const c = p.concentracao_despesas
   const linhaConcentracao =
     c && c.vidas_com_custo > 0
-      ? ` A despesa está concentrada: as 10 vidas de maior custo respondem por ${c.top_10_vidas_pct_custo}% do total, e o 1% mais custoso concentra ${c.top_1pct_vidas_pct_custo}% (base de ${c.vidas_com_custo} vidas com custo).`
+      ? ` A despesa está concentrada: as 10 vidas de maior custo respondem por ${c.dez_maiores_beneficiarios_pct_custo}% do total, e o 1% mais custoso concentra ${c.top_1pct_vidas_pct_custo}% (base de ${c.vidas_com_custo} vidas com custo).`
       : ''
 
   const sm = p.saude_mental
@@ -1116,7 +1119,7 @@ export function gerarResumoMock(p: PayloadIA): string {
           : 'estabilidade no custo entre competências'
   const linhaSaudeMental =
     sm.utilizacoes > 0
-      ? `A saúde mental representa atualmente ${sm.pct_custo}% do custo assistencial monitorado (${brl(sm.custo)} em ${sm.utilizacoes} utilizações de ${sm.beneficiarios} beneficiários) e apresenta ${smTend}${sm.tendencia_pct !== null && sm.tendencia_pct > 0 ? ', exigindo atenção preventiva' : ''}.`
+      ? `A saúde mental representa atualmente ${sm.pct_custo}% do custo assistencial monitorado (${brl(sm.custo)} em ${sm.utilizacoes} utilizações de ${sm.beneficiarios < K_ANONIMATO ? `menos de ${K_ANONIMATO}` : sm.beneficiarios} beneficiários) e apresenta ${smTend}${sm.tendencia_pct !== null && sm.tendencia_pct > 0 ? ', exigindo atenção preventiva' : ''}.`
       : 'Não há utilização relevante de saúde mental no período analisado.'
 
   return `## 1. Resumo executivo

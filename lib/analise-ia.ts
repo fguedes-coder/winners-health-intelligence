@@ -3,6 +3,29 @@ import 'server-only'
 import type { DashboardData } from '@/lib/queries'
 import { formatBRL } from '@/lib/data'
 
+/** Ponto da série histórica: utilização e fatura de uma competência. */
+export type PontoSerie = { competencia: string; utilizado: number; fatura: number }
+
+const MESES = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro']
+
+/** "2026-08" → "agosto/2026". Texto de relatório não carrega data ISO. */
+export function competenciaPorExtenso(c: string): string {
+  const m = /^(\d{4})-(\d{2})$/.exec(c)
+  return m ? `${MESES[Number(m[2]) - 1]}/${m[1]}` : c
+}
+
+/** Percentual em pt-BR com 1 casa ("23,6%"), igual aos cartões do PDF. */
+function pctBR(v: number): string {
+  return `${v.toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%`
+}
+
+/** Sinistralidade acumulada da série (soma utilizado ÷ soma fatura). */
+export function sinistralidadeAcumulada(serie: PontoSerie[]): number | null {
+  const fat = serie.reduce((a, p) => a + p.fatura, 0)
+  if (serie.length < 2 || fat <= 0) return null
+  return (serie.reduce((a, p) => a + p.utilizado, 0) / fat) * 100
+}
+
 export type AnaliseExecutiva = {
   resumoExecutivo: string
   pontosAtencao: string[]
@@ -17,32 +40,47 @@ export type AnaliseExecutiva = {
 export function gerarAnaliseExecutiva(
   data: DashboardData,
   competencia: string,
+  historico: PontoSerie[] = [],
+  opcoes: { anoContratual?: boolean } = {},
 ): AnaliseExecutiva {
   const k = data.kpis
   const sin = data.evolucaoSinistralidade.at(-1)?.valor ?? null
+  // O acumulado da série é a medida técnica da carteira; o mês isolado oscila
+  // com o calendário de pagamento da operadora. Recomendações e conclusão
+  // seguem o acumulado quando há série, e o mês quando não há.
+  const acumulado = sinistralidadeAcumulada(historico)
+  const sinRef = acumulado ?? sin
+  const janela =
+    historico.length >= 2
+      ? `${opcoes.anoContratual ? 'do ano contratual, ' : ''}de ${competenciaPorExtenso(historico[0].competencia)} a ${competenciaPorExtenso(historico[historico.length - 1].competencia)}`
+      : null
 
   // ---- Pontos de atenção --------------------------------------------------
   const pontos: string[] = []
 
+  const leitura = (v: number) =>
+    v >= 100
+      ? 'acima de 100%, em déficit técnico'
+      : v >= 75
+        ? 'acima do ponto de equilíbrio técnico (75%)'
+        : v >= 70
+          ? 'próxima do ponto de equilíbrio técnico (70% a 75%)'
+          : 'abaixo do ponto de equilíbrio técnico'
   if (sin !== null) {
-    if (sin >= 100)
-      pontos.push(
-        `Sinistralidade de ${sin.toFixed(1)}% acima do ponto de equilíbrio (100%), indicando déficit técnico da carteira no período.`,
-      )
-    else if (sin >= 75)
-      pontos.push(
-        `Sinistralidade de ${sin.toFixed(1)}% em patamar de atenção, aproximando-se do limite de equilíbrio atuarial.`,
-      )
-    else
-      pontos.push(
-        `Sinistralidade de ${sin.toFixed(1)}% em patamar saudável no período.`,
-      )
+    pontos.push(
+      `Sinistralidade de ${pctBR(sin)} no mês de referência, ${leitura(sin)}.`,
+    )
+  }
+  if (acumulado !== null && janela) {
+    pontos.push(
+      `No acumulado ${janela} (${historico.length} competências), a sinistralidade é de ${pctBR(acumulado)}, ${leitura(acumulado)}.`,
+    )
   }
 
   const top5 = data.topUtilizadores.slice(0, 5).reduce((s, u) => s + u.valor, 0)
   if (k.valorUtilizado > 0) {
     pontos.push(
-      `Os 5 maiores utilizadores concentram ${((top5 / k.valorUtilizado) * 100).toFixed(1)}% do valor utilizado, evidenciando concentração de risco.`,
+      `Os 5 maiores utilizadores concentram ${pctBR((top5 / k.valorUtilizado) * 100)} do valor utilizado, evidenciando concentração de risco.`,
     )
   }
 
@@ -56,10 +94,14 @@ export function gerarAnaliseExecutiva(
   // principal" do arquivo é o nome do procedimento, e citá-lo aqui reintroduz
   // no texto exatamente o dado sensível que a camada de privacidade remove das
   // tabelas (ex.: "CURETAGEM POS-ABORTAMENTO lidera o valor utilizado").
-  const catTop = [...data.categoriasGerenciais].sort((a, b) => b.valor - a.valor)[0]
+  // "Demais Utilizações" é o balde do que não foi classificado — dizer ao
+  // cliente que "outros" lidera o gasto não informa nada.
+  const catTop = [...data.categoriasGerenciais]
+    .filter((c) => c.nome !== 'Demais Utilizações')
+    .sort((a, b) => b.valor - a.valor)[0]
   if (catTop) {
     pontos.push(
-      `A categoria "${catTop.nome}" lidera o valor utilizado, respondendo por ${catTop.pct.toFixed(1)}% do total.`,
+      `A categoria "${catTop.nome}" lidera o valor utilizado, respondendo por ${pctBR(catTop.pct)} do total.`,
     )
   }
 
@@ -75,18 +117,21 @@ export function gerarAnaliseExecutiva(
   )[0]
   if (faixaTop && faixaTop.pctValor > 0) {
     pontos.push(
-      `A faixa etária "${faixaTop.faixa}" concentra ${faixaTop.pctValor.toFixed(1)}% do valor utilizado, orientando ações de saúde direcionadas.`,
+      `A faixa etária "${faixaTop.faixa}" concentra ${pctBR(faixaTop.pctValor)} do valor utilizado, orientando ações de saúde direcionadas.`,
     )
   }
 
   // ---- Resumo executivo ---------------------------------------------------
   const partesResumo: string[] = [
-    `No período de referência (${competencia}), a carteira registrou ${formatBRL(
+    `Na competência de ${competenciaPorExtenso(competencia)} (mês de pagamento pela operadora), a carteira registrou ${formatBRL(
       k.valorUtilizado,
     )} em utilização, distribuídos por ${k.eventos} eventos e ${k.vidasComUtilizacao} vidas com utilização (${k.titulares} titulares e ${k.dependentes} dependentes).`,
   ]
   if (sin !== null) {
-    partesResumo.push(`A sinistralidade apurada foi de ${sin.toFixed(1)}%.`)
+    partesResumo.push(`A sinistralidade apurada no mês foi de ${pctBR(sin)}.`)
+    if (acumulado !== null && janela) {
+      partesResumo.push(`No acumulado ${janela}, foi de ${pctBR(acumulado)}.`)
+    }
   }
   if (data.vidas.custoMedioVida !== null) {
     partesResumo.push(
@@ -95,7 +140,7 @@ export function gerarAnaliseExecutiva(
   }
   if (data.vidas.taxaUtilizacao !== null) {
     partesResumo.push(
-      `A taxa de utilização da carteira atingiu ${data.vidas.taxaUtilizacao.toFixed(1)}%.`,
+      `A taxa de utilização da carteira atingiu ${pctBR(data.vidas.taxaUtilizacao)}.`,
     )
   }
   partesResumo.push(
@@ -110,7 +155,7 @@ export function gerarAnaliseExecutiva(
         'Acompanhar de forma individualizada os beneficiários de maior custo, com programas de gestão de crônicos e navegação de cuidado para mitigar a concentração de risco.',
     },
   ]
-  if (sin !== null && sin >= 75) {
+  if (sinRef !== null && sinRef >= 75) {
     recomendacoes.push({
       titulo: 'Contenção da sinistralidade',
       descricao:
@@ -138,9 +183,9 @@ export function gerarAnaliseExecutiva(
 
   // ---- Conclusão ----------------------------------------------------------
   const conclusao =
-    sin !== null && sin >= 100
+    sinRef !== null && sinRef >= 100
       ? 'O relatório evidencia uma carteira em déficit técnico no período. Recomenda-se priorizar as ações de gestão de saúde e a revisão das condições contratuais para restabelecer o equilíbrio financeiro.'
-      : sin !== null && sin >= 75
+      : sinRef !== null && sinRef >= 75
         ? 'O relatório indica uma carteira em zona de atenção. A continuidade do monitoramento mensal e a execução das ações recomendadas são essenciais para preservar a sustentabilidade do contrato.'
         : 'O relatório consolida a posição atual da carteira. Recomenda-se a continuidade do monitoramento mensal dos indicadores e a implementação das ações de gestão de saúde para a sustentabilidade do contrato.'
 
