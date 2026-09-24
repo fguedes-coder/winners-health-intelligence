@@ -92,8 +92,12 @@ const RE_REAJUSTE = /reajuste[^.\n]{0,60}?\d+(?:[.,]\d+)?\s*%/i
 // Comparação com período anterior — impossível com uma única competência. O
 // relatório de ago/26 saiu com "sinistralidade estável, sem variação em
 // relação à competência anterior" analisando só agosto.
+//
+// Só pega AFIRMAÇÃO de evolução. "Estável" solto não entra: "manter a
+// sinistralidade estável" é recomendação, não comparação — a primeira versão
+// desta regra barrava isso e derrubou a análise do PDF de ago/26 duas vezes.
 const RE_COMPARACAO_TEMPORAL =
-  /(?:compet[êe]ncia|m[êe]s|per[íi]odo)\s+anterior|sem\s+varia[çc][ãa]o|\best[áa]vel\b|\bestabilidade\b|\bcresceu\b|\baumentou\b|\breduziu\b|\bcaiu\b/i
+  /(?:compet[êe]ncia|m[êe]s|per[íi]odo|ciclo)\s+anterior|sem\s+varia[çc][ãa]o|(?:permanece[u]?|mant[eé]m-se|manteve-se|segue|seguiu|continua|continuou|revela\s+uma?|apresenta\s+uma?|mostra\s+uma?)\s+(?:[a-zà-ú]+\s+){0,2}est[áa]ve(?:l|is)\b|\bestabilidade\s+(?:da|de|na|do|no)\s+(?:sinistralidade|custo|utiliza)|\b(?:cresceu|aumentou|reduziu|caiu|subiu|recuou|avan[çc]ou)\b/i
 // "top 10% das vidas": o payload tem os 10 maiores beneficiários (contagem),
 // não o top 10% — o modelo confundiu os dois em ago/26.
 // Recomendar corte de exames contradiz a recomendação de ampliar prevenção e
@@ -150,9 +154,12 @@ export function validarAnaliseIA(
   }
 
   // 3) comparação temporal sem competência anterior no recorte
-  if (fatos.competencias < 2 && RE_COMPARACAO_TEMPORAL.test(texto)) {
+  const comparacao = fatos.competencias < 2 ? RE_COMPARACAO_TEMPORAL.exec(texto) : null
+  if (comparacao) {
+    // O trecho vai no motivo: aparece no log e na instrução de correção, e o
+    // modelo sabe exatamente o que tirar na segunda tentativa.
     violacoes.push(
-      'comparação com período anterior, mas o recorte tem uma única competência',
+      `comparação com período anterior ("${comparacao[0]}"), mas o recorte tem uma única competência`,
     )
   }
 

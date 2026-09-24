@@ -2025,7 +2025,12 @@ class Relatorio {
     // Seção suprimida quando a análise não passou na validação automática:
     // sem número, sem entrada no sumário e sem página. Relatório sem a seção é
     // publicável; relatório que se contradiz não é.
-    const iaPublicavel = Boolean(analiseIA && analiseIA.fonte !== 'suprimida')
+    // Só a análise do modelo, aprovada na validação, vai para o cliente. O
+    // texto determinístico de reserva serve à tela, mas não a um relatório
+    // externo: cita "carteira consolidada (todos os clientes)", risco crítico
+    // inexistente e instrução de configuração (OPENAI_API_KEY). Conclusões e
+    // Recomendações do próprio relatório cobrem a leitura sem a seção.
+    const iaPublicavel = Boolean(analiseIA && analiseIA.fonte === 'ia')
     const numIA = iaPublicavel ? String(n++) : null
     const numConclusoes = String(n++)
     if (numSaudeMental) secoes.push({ num: numSaudeMental, nome: 'Saúde Mental' })
@@ -2476,7 +2481,7 @@ class Relatorio {
     }
 
     // WINNERS DECIDE IA (análise consultiva)
-    if (numIA && analiseIA && analiseIA.fonte !== 'suprimida') {
+    if (numIA && analiseIA && analiseIA.fonte === 'ia') {
       this.secaoWinnersDecideIA(numIA, analiseIA)
     }
 
