@@ -129,6 +129,13 @@ function pct(v: number | null): string {
     : `${v.toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%`
 }
 
+/** Enumeração em português: "a", "a e b", "a, b e c". */
+function listaPtBR(itens: string[]): string {
+  return itens.length <= 1
+    ? (itens[0] ?? '')
+    : `${itens.slice(0, -1).join(', ')} e ${itens[itens.length - 1]}`
+}
+
 /** Formatação compacta para eixos de gráfico (R$ 1,2 mi / R$ 340 mil). */
 function fmtCompacto(v: number): string {
   if (v >= 1_000_000) return `R$ ${(v / 1_000_000).toFixed(1).replace('.', ',')} mi`
@@ -2028,9 +2035,9 @@ class Relatorio {
     const principaisAtend = this.input.mesesAtendimento.filter((m) => m.pct >= 5).slice(0, 3)
     if (principaisAtend.length > 0) {
       this.nota(
-        `Competência é o mês em que a operadora pagou os eventos, não o mês do atendimento. Os eventos pagos neste período foram realizados em ${principaisAtend
-          .map((m) => `${fmtCompExt(m.mes).toLowerCase()} (${pct(m.pct)})`)
-          .join(', ')}.`,
+        `Competência é o mês em que a operadora pagou os eventos, não o mês do atendimento. Os eventos pagos neste período foram realizados em ${listaPtBR(
+          principaisAtend.map((m) => `${fmtCompExt(m.mes).toLowerCase()} (${pct(m.pct)})`),
+        )}.`,
       )
     }
     this.kpis([

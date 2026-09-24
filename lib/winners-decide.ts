@@ -767,6 +767,7 @@ REGRAS OBRIGATÓRIAS
 14. Toda conclusão relevante deve citar a evidência utilizada — o número, percentual ou campo do payload que a sustenta (ex.: "internações concentram 83,3% do custo", "custo total de R$ X", "N vidas em risco crítico"). Não faça afirmações sem apoiá-las em dados presentes no payload.
 15. Não afirme estabilidade, variação, crescimento ou queda em relação a competências anteriores quando "competencias_analisadas" for 1 — com uma competência não há comparação possível.
 16. Não qualifique uma utilização como "elevada", "excessiva" ou "dependência" sem uma referência comparativa presente no payload; descreva o dado (ex.: "o pronto-socorro responde por 28,2% do custo em 19 eventos").
+17. Nunca recomende reduzir, cortar, auditar ou "revisar a necessidade" de exames: são, em sua maioria, laboratório e rastreamento preventivo, e o relatório recomenda AMPLIAR a prevenção. Quando exames liderarem o custo, trate como uso da rede diagnóstica e recomende direcionamento para prestadores de melhor custo-efetividade e protocolos de rastreamento por faixa etária — nunca menos exames.
 
 FREQUÊNCIA NÃO É IMPACTO FINANCEIRO
 - Nunca conclua que um fator é o principal impacto financeiro apenas pela quantidade de ocorrências.
