@@ -25,18 +25,25 @@ function caminhoNoBucket(url: string | null): string | null {
 export type RelatorioConfig = {
   clienteNome: string | null
   logoClienteUrl: string | null
+  /** Mês (1–12) de aniversário do contrato; início do acumulado do relatório. */
+  mesAniversario: number | null
 }
 
 export async function getRelatorioConfig(): Promise<RelatorioConfig> {
   const supabase = await createClient()
+  // select('*') em vez de listar colunas: mes_aniversario pode ainda não
+  // existir no banco, e pedir coluna inexistente derruba a consulta inteira —
+  // levando junto o nome e o logo da capa.
   const { data } = await supabase
     .from('relatorio_config')
-    .select('cliente_nome, logo_cliente_url')
+    .select('*')
     .eq('id', 1)
     .maybeSingle()
+  const mes = Number((data as { mes_aniversario?: unknown } | null)?.mes_aniversario)
   return {
     clienteNome: data?.cliente_nome ?? null,
     logoClienteUrl: data?.logo_cliente_url ?? null,
+    mesAniversario: Number.isInteger(mes) && mes >= 1 && mes <= 12 ? mes : null,
   }
 }
 
@@ -50,6 +57,25 @@ export async function salvarNomeCliente(
   const { error } = await supabase
     .from('relatorio_config')
     .update({ cliente_nome: nome.trim() || null, atualizado_em: new Date().toISOString() })
+    .eq('id', 1)
+  if (error) return { ok: false, error: error.message }
+  revalidatePath('/relatorios')
+  return { ok: true }
+}
+
+export async function salvarMesAniversario(
+  mes: number | null,
+): Promise<{ ok: boolean; error?: string }> {
+  const auth = await requireAuthAction()
+  if ('error' in auth) return { ok: false, error: auth.error }
+  if (mes !== null && !(Number.isInteger(mes) && mes >= 1 && mes <= 12)) {
+    return { ok: false, error: 'Mês inválido.' }
+  }
+
+  const supabase = await createClient()
+  const { error } = await supabase
+    .from('relatorio_config')
+    .update({ mes_aniversario: mes, atualizado_em: new Date().toISOString() })
     .eq('id', 1)
   if (error) return { ok: false, error: error.message }
   revalidatePath('/relatorios')

@@ -126,7 +126,7 @@ function fmtCompShort(yyyymm: string): string {
 function pct(v: number | null): string {
   return v === null
     ? '—'
-    : `${v.toLocaleString('pt-BR', { maximumFractionDigits: 1 })}%`
+    : `${v.toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%`
 }
 
 /** Formatação compacta para eixos de gráfico (R$ 1,2 mi / R$ 340 mil). */
@@ -180,6 +180,8 @@ export type RelatorioPdfInput = {
   competenciasSelecionadas: string[]
   /** Série até a competência de referência (até 12 meses com fatura). */
   historico: PontoHistorico[]
+  /** Início do ano contratual (aniversário), quando informado. */
+  inicioAnoContratual?: string | null
   /** Meses de atendimento dos eventos pagos no recorte, do maior para o menor. */
   mesesAtendimento: MesAtendimento[]
   /** Base de vidas da competência de referência (null se não importada). */
@@ -2174,10 +2176,15 @@ class Relatorio {
               valor: (h.utilizado / h.fatura) * 100,
             }))
           : data.evolucaoSinistralidade
+      const inicioAno = this.input.inicioAnoContratual ?? null
       this.paragraph(
         historico.length > 1
-          ? `Evolução mensal da sinistralidade (valor utilizado ÷ fatura) nas ${historico.length} competências até ${this.periodoLabel.toLowerCase()}. O ponto de equilíbrio técnico situa-se em torno de 70% a 75%.`
-          : 'Sinistralidade da competência (valor utilizado ÷ fatura). O ponto de equilíbrio técnico situa-se em torno de 70% a 75%. Não há competências anteriores com fatura para compor a série.',
+          ? inicioAno
+            ? `Evolução mensal da sinistralidade (valor utilizado ÷ fatura) no ano contratual, desde o aniversário do contrato em ${fmtCompExt(inicioAno).toLowerCase()}. O ponto de equilíbrio técnico situa-se em torno de 70% a 75%.`
+            : `Evolução mensal da sinistralidade (valor utilizado ÷ fatura) nas ${historico.length} competências até ${this.periodoLabel.toLowerCase()}. O ponto de equilíbrio técnico situa-se em torno de 70% a 75%.`
+          : inicioAno
+            ? 'Sinistralidade da competência (valor utilizado ÷ fatura). É a primeira competência do ano contratual; o acumulado passa a ser apresentado a partir do mês seguinte. O ponto de equilíbrio técnico situa-se em torno de 70% a 75%.'
+            : 'Sinistralidade da competência (valor utilizado ÷ fatura). O ponto de equilíbrio técnico situa-se em torno de 70% a 75%. Não há competências anteriores com fatura para compor a série.',
       )
       const comprimidos = this.lineChartSinistralidade(serie)
       if (comprimidos > 0) {
@@ -2202,7 +2209,12 @@ class Relatorio {
               formatBRL(h.fatura),
               pct((h.utilizado / h.fatura) * 100),
             ]),
-            ['Acumulado', formatBRL(totU), formatBRL(totF), pct((totU / totF) * 100)],
+            [
+              inicioAno ? 'Acumulado do ano contratual' : 'Acumulado',
+              formatBRL(totU),
+              formatBRL(totF),
+              pct((totU / totF) * 100),
+            ],
           ],
         )
       }

@@ -41,6 +41,7 @@ export function gerarAnaliseExecutiva(
   data: DashboardData,
   competencia: string,
   historico: PontoSerie[] = [],
+  opcoes: { anoContratual?: boolean } = {},
 ): AnaliseExecutiva {
   const k = data.kpis
   const sin = data.evolucaoSinistralidade.at(-1)?.valor ?? null
@@ -51,7 +52,7 @@ export function gerarAnaliseExecutiva(
   const sinRef = acumulado ?? sin
   const janela =
     historico.length >= 2
-      ? `de ${competenciaPorExtenso(historico[0].competencia)} a ${competenciaPorExtenso(historico[historico.length - 1].competencia)}`
+      ? `${opcoes.anoContratual ? 'do ano contratual, ' : ''}de ${competenciaPorExtenso(historico[0].competencia)} a ${competenciaPorExtenso(historico[historico.length - 1].competencia)}`
       : null
 
   // ---- Pontos de atenção --------------------------------------------------

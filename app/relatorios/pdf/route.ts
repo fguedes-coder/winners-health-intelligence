@@ -23,8 +23,20 @@ import {
   type PontoHistorico,
 } from '@/lib/pdf/relatorio-pdf'
 
-/** Janela da série histórica de sinistralidade (padrão de mercado p/ reajuste). */
+/** Janela máxima da série histórica (padrão de mercado para reajuste). */
 const JANELA_HISTORICO = 12
+
+/**
+ * Primeira competência do ano contratual que contém `fim`: o último mês de
+ * aniversário igual ou anterior a ele (ago/26 com aniversário em março →
+ * 2026-03; fev/27 → 2026-03). Null quando o aniversário não foi informado.
+ */
+function inicioAnoContratual(fim: string | null, mesAniversario: number | null): string | null {
+  if (!fim || !mesAniversario) return null
+  const [ano, mes] = fim.split('-').map(Number)
+  const anoInicio = mes >= mesAniversario ? ano : ano - 1
+  return `${anoInicio}-${String(mesAniversario).padStart(2, '0')}`
+}
 
 // Geração de PDF nativo (jsPDF) — requer runtime Node.js.
 export const runtime = 'nodejs'
@@ -109,10 +121,14 @@ export async function GET(request: NextRequest) {
 
   // Série histórica até a competência de referência. Um mês isolado não diz se
   // a carteira está saudável: em 2026, ago/26 teve 23,6% e jun/26, 95%.
+  // Começa no aniversário do contrato quando informado (é como o cliente e a
+  // operadora leem o acumulado); sem ele, os últimos 12 meses.
+  const inicioAno = inicioAnoContratual(competenciaFim, config.mesAniversario)
   const historico: PontoHistorico[] = carteiraInteira.resumoCompetencia
     .filter(
       (r) =>
         (!competenciaFim || r.competencia <= competenciaFim) &&
+        (!inicioAno || r.competencia >= inicioAno) &&
         faturaPorCompetencia[r.competencia] > 0,
     )
     .slice(-JANELA_HISTORICO)
@@ -159,7 +175,9 @@ export async function GET(request: NextRequest) {
     }
   }
 
-  const analise = gerarAnaliseExecutiva(dataDoc, competenciaRef, historico)
+  const analise = gerarAnaliseExecutiva(dataDoc, competenciaRef, historico, {
+    anoContratual: Boolean(inicioAno),
+  })
 
   // Análise consultiva Winners Decide IA (mesma lógica do endpoint /analyze:
   // OpenAI quando há chave, senão determinística). Sempre sobre dados anonimizados.
@@ -237,6 +255,7 @@ export async function GET(request: NextRequest) {
     competenciaFim,
     competenciasSelecionadas: competencias,
     historico,
+    inicioAnoContratual: inicioAno,
     mesesAtendimento,
     baseVidas,
     tituloDocumento: nomeDocumento,
