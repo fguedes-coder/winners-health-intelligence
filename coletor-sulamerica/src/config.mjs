@@ -1,14 +1,11 @@
-// Configuração do coletor. Segredos vêm só de variáveis de ambiente,
-// cadastradas no painel do Coolify — nunca em arquivo nem no repositório.
+// Configuração do coletor.
+//
+// Login e senhas do portal e do e-mail NÃO ficam aqui: o usuário os digita na
+// aba Configurações → Robôs e eles são guardados criptografados
+// no Supabase Vault (ver credenciais.mjs). No ambiente fica só o acesso ao
+// banco do Health.
 
-const obrigatorias = [
-  'SULAMERICA_LOGIN',
-  'SULAMERICA_SENHA',
-  'IMAP_USUARIO',
-  'IMAP_SENHA',
-  'SUPABASE_URL',
-  'SUPABASE_SERVICE_ROLE_KEY',
-]
+const obrigatorias = ['SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY']
 
 const faltando = obrigatorias.filter((k) => !process.env[k]?.trim())
 if (faltando.length > 0) {
@@ -22,8 +19,6 @@ export const config = {
     urlLogin:
       process.env.SULAMERICA_URL_LOGIN ??
       'https://os11.sulamerica.com.br/SASHubEmp/IntegraSASLogin.aspx',
-    login: process.env.SULAMERICA_LOGIN.trim(),
-    senha: process.env.SULAMERICA_SENHA,
     // Única apólice da carteira hoje; aparece sozinha na Nova Solicitação.
     apolice: process.env.SULAMERICA_APOLICE?.trim() || '81938',
   },
@@ -33,8 +28,6 @@ export const config = {
     // do certificado ligada; desligá-la para "funcionar" não é opção.
     host: process.env.IMAP_HOST?.trim() || 'mail.winnersseguros.net.br',
     porta: Number(process.env.IMAP_PORTA ?? 993),
-    usuario: process.env.IMAP_USUARIO.trim(),
-    senha: process.env.IMAP_SENHA,
   },
   supabase: {
     url: process.env.SUPABASE_URL.trim(),

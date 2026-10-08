@@ -16,14 +16,17 @@ confirmar a importação continua sendo do usuário.
 4. Mês fora da lista → **Nova Solicitação** (apólice, início = fim = mês) →
    status `aguardando` → nova conferência em ~70 min (a SulAmérica libera em até 1 h).
 
-## Variáveis (painel do Coolify — nunca em arquivo)
+## Credenciais
+
+Login e senha do portal e do e-mail que recebe o token são digitados em
+**Configurações → Robôs** e ficam criptografados no Supabase Vault
+(`salvar_credencial_sulamerica`). O coletor os lê a cada busca pela função
+`credenciais_sulamerica_coletor`, que só a service role executa.
+
+## Variáveis (painel do Coolify)
 
 | Variável | |
 |---|---|
-| `SULAMERICA_LOGIN` | login do portal |
-| `SULAMERICA_SENHA` | senha do portal |
-| `IMAP_USUARIO` | caixa que recebe o token |
-| `IMAP_SENHA` | senha dessa caixa |
 | `SUPABASE_URL` | URL do Supabase do Health |
 | `SUPABASE_SERVICE_ROLE_KEY` | service role do Supabase do Health |
 | `IMAP_HOST` | opcional — padrão `mail.winnersseguros.net.br` (nome do certificado TLS) |
@@ -31,4 +34,4 @@ confirmar a importação continua sendo do usuário.
 
 ## Banco
 
-`schema.sql` cria a tabela da fila (RLS no padrão do projeto).
+`schema.sql` cria a tabela da fila (RLS no padrão do projeto) e as funções do cofre de credenciais.

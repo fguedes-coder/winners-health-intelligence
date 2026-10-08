@@ -43,3 +43,68 @@ create policy coletas_sulamerica_delete on public.coletas_sulamerica for delete 
 revoke all on public.coletas_sulamerica from anon;
 grant select, insert, update, delete on public.coletas_sulamerica to authenticated;
 grant all on public.coletas_sulamerica to service_role;
+
+-- ---------------------------------------------------------------------------
+-- Credenciais do portal e do e-mail do token, digitadas pelo usuário em
+-- Configurações → Robôs e guardadas CRIPTOGRAFADAS no Supabase
+-- Vault. O app grava e consulta só a data de atualização; o valor
+-- descriptografado sai apenas para o coletor (service_role).
+-- ---------------------------------------------------------------------------
+
+create or replace function public.salvar_credencial_sulamerica(p_nome text, p_valor text)
+returns void
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_id uuid;
+begin
+  if p_nome not in ('sulamerica_login', 'sulamerica_senha', 'sulamerica_imap_usuario', 'sulamerica_imap_senha') then
+    raise exception 'credencial desconhecida: %', p_nome;
+  end if;
+  if coalesce(btrim(p_valor), '') = '' then
+    raise exception 'valor vazio para %', p_nome;
+  end if;
+  select id into v_id from vault.secrets where name = p_nome;
+  if v_id is null then
+    perform vault.create_secret(p_valor, p_nome, 'Coletor SulAmérica — Winners Health Intelligence');
+  else
+    perform vault.update_secret(v_id, p_valor);
+  end if;
+end;
+$$;
+revoke all on function public.salvar_credencial_sulamerica(text, text) from public, anon;
+grant execute on function public.salvar_credencial_sulamerica(text, text) to authenticated;
+
+-- Para a tela: o que está cadastrado e quando. Valor só dos logins (e-mails),
+-- nunca das senhas.
+create or replace function public.status_credenciais_sulamerica()
+returns table (nome text, atualizado_em timestamptz, valor_visivel text)
+language sql
+security definer
+set search_path = ''
+as $$
+  select s.name,
+         s.updated_at,
+         case when s.name in ('sulamerica_login', 'sulamerica_imap_usuario') then d.decrypted_secret end
+  from vault.secrets s
+  join vault.decrypted_secrets d on d.id = s.id
+  where s.name in ('sulamerica_login', 'sulamerica_senha', 'sulamerica_imap_usuario', 'sulamerica_imap_senha');
+$$;
+revoke all on function public.status_credenciais_sulamerica() from public, anon;
+grant execute on function public.status_credenciais_sulamerica() to authenticated;
+
+-- Para o coletor: valores descriptografados. Só a service_role executa.
+create or replace function public.credenciais_sulamerica_coletor()
+returns table (nome text, valor text)
+language sql
+security definer
+set search_path = ''
+as $$
+  select name, decrypted_secret
+  from vault.decrypted_secrets
+  where name in ('sulamerica_login', 'sulamerica_senha', 'sulamerica_imap_usuario', 'sulamerica_imap_senha');
+$$;
+revoke all on function public.credenciais_sulamerica_coletor() from public, anon, authenticated;
+grant execute on function public.credenciais_sulamerica_coletor() to service_role;

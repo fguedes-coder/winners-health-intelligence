@@ -12,6 +12,7 @@
 import { createClient } from '@supabase/supabase-js'
 import { config } from './config.mjs'
 import { ArquivoIndisponivel, ArquivoSolicitado, baixarContasPagas } from './portal.mjs'
+import { carregarCredenciais } from './credenciais.mjs'
 
 const db = createClient(config.supabase.url, config.supabase.chave, {
   auth: { persistSession: false, autoRefreshToken: false },
@@ -98,10 +99,14 @@ async function processar(coleta) {
   log(`coleta ${coleta.id} · ${competencia} · tentativa ${coleta.tentativas}`)
 
   try {
+    // Lidas a cada execução: se o usuário trocar uma senha na tela, a próxima
+    // busca já usa a nova, sem reiniciar o coletor.
+    const credenciais = await carregarCredenciais(db)
     const { nome, conteudo } = await baixarContasPagas({
       competencia,
       podeSolicitar: !jaSolicitado,
       log: (m) => log(`  ${m}`),
+      credenciais,
     })
     const path = `coletas-sulamerica/${competencia}/${Date.now()}-${nome.replace(/[^a-zA-Z0-9._-]/g, '_')}`
     const { error: upErr } = await db.storage
