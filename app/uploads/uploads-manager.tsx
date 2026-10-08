@@ -1,6 +1,6 @@
 'use client'
 
-import { useRef, useState, useTransition } from 'react'
+import { useEffect, useRef, useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import {
   AlertTriangle,
@@ -8,9 +8,11 @@ import {
   Building2,
   CheckCircle2,
   ClipboardCheck,
+  CloudDownload,
   FileText,
   Hospital,
   Loader2,
+  RefreshCw,
   Trash2,
   UploadCloud,
   Users,
@@ -31,10 +33,32 @@ import { formatBRL } from '@/lib/data'
 import {
   cancelarImportacao,
   confirmarImportacao,
+  processarArquivoColetado,
   processarUpload,
+  solicitarBuscaSulAmerica,
+  type ColetaSulAmerica,
   type Importacao,
   type PreviewResult,
 } from './actions'
+
+const MESES = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro']
+
+/** "2026-09" → "Setembro/2026". */
+function mesReferencia(c: string): string {
+  const m = /^(\d{4})-(\d{2})$/.exec(c)
+  return m ? `${MESES[Number(m[2]) - 1]}/${m[1]}` : c
+}
+
+function dataHora(iso: string | null): string {
+  if (!iso) return ''
+  return new Date(iso).toLocaleString('pt-BR', {
+    day: '2-digit',
+    month: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    timeZone: 'America/Sao_Paulo',
+  })
+}
 
 type ClienteOption = { id: string; nome: string }
 
@@ -96,9 +120,12 @@ function formatDateBR(value: string | null) {
 export function UploadsManager({
   importacoes,
   clientes,
+  coletas,
 }: {
   importacoes: Importacao[]
   clientes: ClienteOption[]
+  /** null quando a tabela do coletor ainda não existe: o cartão não aparece. */
+  coletas: ColetaSulAmerica[] | null
 }) {
   const router = useRouter()
   const formRef = useRef<HTMLFormElement>(null)
@@ -111,6 +138,59 @@ export function UploadsManager({
   const [duplicado, setDuplicado] = useState(false)
   const [deletingId, setDeletingId] = useState<string | null>(null)
 
+  // ---- coletor automático (SulAmérica Integra) ---------------------------
+  const ultimaColeta = coletas?.[0] ?? null
+  const coletaPronta = coletas?.find((c) => c.status === 'pronto') ?? null
+  const buscando =
+    ultimaColeta?.status === 'pendente' || ultimaColeta?.status === 'executando'
+  const aguardandoLiberacao = ultimaColeta?.status === 'aguardando'
+  const [coletaMsg, setColetaMsg] = useState<string | null>(null)
+  const [solicitando, startSolicitar] = useTransition()
+
+  // Enquanto o coletor trabalha (login + token por e-mail + download leva
+  // alguns minutos), a tela se atualiza sozinha a cada 15 s.
+  // Esperando a SulAmérica liberar (até ~1 h), basta conferir a cada minuto.
+  useEffect(() => {
+    if (!buscando && !aguardandoLiberacao) return
+    const t = setInterval(() => router.refresh(), buscando ? 15_000 : 60_000)
+    return () => clearInterval(t)
+  }, [buscando, aguardandoLiberacao, router])
+
+  function buscarAgora() {
+    setColetaMsg(null)
+    startSolicitar(async () => {
+      const r = await solicitarBuscaSulAmerica()
+      if (!r.ok) setColetaMsg(r.error ?? 'Não foi possível solicitar a busca.')
+      router.refresh()
+    })
+  }
+
+  function aplicarPrevia(result: PreviewResult, clienteNome: string) {
+    if (result?.error) {
+      setError(result.error)
+      return
+    }
+    setPreview({ ...result, clienteNome })
+    setCompetencia(result.competenciaSugerida ?? '')
+    setDuplicado(false)
+    router.refresh()
+  }
+
+  function processarColeta(coleta: ColetaSulAmerica) {
+    setError(null)
+    if (!clienteId) {
+      setError('Selecione o cliente antes de processar o arquivo.')
+      return
+    }
+    const clienteNome = clientes.find((c) => c.id === clienteId)?.nome ?? ''
+    startTransition(async () => {
+      aplicarPrevia(
+        await processarArquivoColetado(coleta.id, clienteId, clienteNome),
+        clienteNome,
+      )
+    })
+  }
+
   function handleProcess(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault()
     setError(null)
@@ -119,15 +199,7 @@ export function UploadsManager({
     formData.set('cliente_nome', clienteNome)
 
     startTransition(async () => {
-      const result = await processarUpload(formData)
-      if (result?.error) {
-        setError(result.error)
-        return
-      }
-      setPreview({ ...result, clienteNome })
-      setCompetencia(result.competenciaSugerida ?? '')
-      setDuplicado(false)
-      router.refresh()
+      aplicarPrevia(await processarUpload(formData), clienteNome)
     })
   }
 
@@ -503,7 +575,8 @@ export function UploadsManager({
               onSubmit={handleProcess}
               className="flex flex-col gap-4"
             >
-              <div className="flex flex-col gap-1.5 sm:max-w-sm">
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-end">
+              <div className="flex flex-col gap-1.5 sm:w-full sm:max-w-sm">
                 <label
                   htmlFor="cliente_id"
                   className="text-sm font-medium text-foreground"
@@ -525,6 +598,108 @@ export function UploadsManager({
                     </option>
                   ))}
                 </select>
+              </div>
+
+              {coletas !== null && (
+                <div className="flex min-h-10 flex-1 flex-wrap items-center gap-3 rounded-lg border border-border bg-background/40 px-3 py-2">
+                  {buscando ? (
+                    <>
+                      <Loader2 className="size-4 shrink-0 animate-spin text-primary" />
+                      <span className="text-sm text-foreground">
+                        Buscando o arquivo de{' '}
+                        <strong>{mesReferencia(ultimaColeta!.competencia)}</strong>{' '}
+                        no portal da SulAmérica…
+                      </span>
+                      <span className="text-xs text-muted-foreground">
+                        leva alguns minutos (o token chega por e-mail)
+                      </span>
+                    </>
+                  ) : aguardandoLiberacao ? (
+                    <>
+                      <Loader2 className="size-4 shrink-0 animate-spin text-amber-500" />
+                      <span className="text-sm text-foreground">
+                        Arquivo de{' '}
+                        <strong>{mesReferencia(ultimaColeta!.competencia)}</strong>{' '}
+                        solicitado à SulAmérica · liberação em até 1 h
+                      </span>
+                      <span className="text-xs text-muted-foreground">
+                        o download é automático
+                        {ultimaColeta!.proxima_tentativa_em
+                          ? ` · próxima conferência às ${dataHora(ultimaColeta!.proxima_tentativa_em).split(' ').pop()}`
+                          : ''}
+                      </span>
+                    </>
+                  ) : coletaPronta ? (
+                    <>
+                      <CheckCircle2 className="size-4 shrink-0 text-emerald-500" />
+                      <span className="text-sm text-foreground">
+                        Arquivo pronto para importação · Mês de referência{' '}
+                        <strong>{mesReferencia(coletaPronta.competencia)}</strong>
+                      </span>
+                      <span className="text-xs text-muted-foreground">
+                        baixado em {dataHora(coletaPronta.concluido_em)}
+                      </span>
+                      <Button
+                        type="button"
+                        size="sm"
+                        className="ml-auto"
+                        disabled={isPending}
+                        onClick={() => processarColeta(coletaPronta)}
+                      >
+                        {isPending ? (
+                          <Loader2 className="size-4 animate-spin" />
+                        ) : (
+                          <FileText className="size-4" />
+                        )}
+                        Processar este arquivo
+                      </Button>
+                    </>
+                  ) : (
+                    <>
+                      {ultimaColeta?.status === 'erro' ? (
+                        <>
+                          <AlertTriangle className="size-4 shrink-0 text-destructive" />
+                          <span className="text-sm text-destructive">
+                            Busca de {mesReferencia(ultimaColeta.competencia)} falhou
+                            {ultimaColeta.mensagem ? `: ${ultimaColeta.mensagem}` : '.'}
+                          </span>
+                        </>
+                      ) : ultimaColeta?.status === 'importado' ? (
+                        <>
+                          <CheckCircle2 className="size-4 shrink-0 text-muted-foreground" />
+                          <span className="text-sm text-muted-foreground">
+                            {mesReferencia(ultimaColeta.competencia)} já importado
+                          </span>
+                        </>
+                      ) : (
+                        <span className="text-sm text-muted-foreground">
+                          Busca automática no portal SulAmérica todo dia 3.
+                        </span>
+                      )}
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="secondary"
+                        className="ml-auto"
+                        disabled={solicitando}
+                        onClick={buscarAgora}
+                      >
+                        {solicitando ? (
+                          <Loader2 className="size-4 animate-spin" />
+                        ) : ultimaColeta?.status === 'erro' ? (
+                          <RefreshCw className="size-4" />
+                        ) : (
+                          <CloudDownload className="size-4" />
+                        )}
+                        {ultimaColeta?.status === 'erro' ? 'Tentar novamente' : 'Buscar agora'}
+                      </Button>
+                    </>
+                  )}
+                  {coletaMsg && (
+                    <span className="w-full text-xs text-destructive">{coletaMsg}</span>
+                  )}
+                </div>
+              )}
               </div>
 
               <div className="flex flex-col gap-1.5">

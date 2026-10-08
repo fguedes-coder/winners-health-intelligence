@@ -42,6 +42,30 @@ export type Importacao = {
   confirmed_at: string | null
 }
 
+/**
+ * Arquivo TXT baixado do portal SulAmérica Integra pelo coletor automático
+ * (serviço winners-health-intelligence-coletor-sulamerica). O coletor só
+ * BAIXA: processar e confirmar a importação continua sendo ação do usuário.
+ */
+export type ColetaSulAmerica = {
+  id: string
+  competencia: string
+  /**
+   * aguardando — o mês não estava na lista do portal; o coletor fez a Nova
+   * Solicitação e volta a conferir em `proxima_tentativa_em` (~70 min).
+   */
+  status: 'pendente' | 'executando' | 'aguardando' | 'pronto' | 'importado' | 'erro'
+  origem: 'manual' | 'agendado'
+  arquivo_nome: string | null
+  arquivo_path: string | null
+  tamanho: number | null
+  mensagem: string | null
+  importacao_id: string | null
+  proxima_tentativa_em: string | null
+  solicitado_em: string
+  concluido_em: string | null
+}
+
 export type ResumoImportacao = {
   subestipulantes: SubestipulanteResumo[]
   topPrestadores: RankItem[]
@@ -129,6 +153,37 @@ export async function processarUpload(
 
   if (uploadError) return { error: `Falha no upload: ${uploadError.message}` }
 
+  return registrarPrevia(supabase, {
+    clienteId,
+    clienteNome,
+    parsed,
+    arquivoNome: file.name,
+    arquivoPath: path,
+    tamanho: file.size,
+  })
+}
+
+type SupabaseServer = Awaited<ReturnType<typeof createClient>>
+
+/**
+ * Grava a importação como "pendente" e devolve a prévia. Comum ao upload
+ * manual e ao arquivo baixado pelo coletor — os dois seguem exatamente o
+ * mesmo fluxo de prévia e confirmação de competência.
+ */
+async function registrarPrevia(
+  supabase: SupabaseServer,
+  args: {
+    clienteId: string
+    clienteNome: string
+    parsed: ParseResult
+    arquivoNome: string
+    arquivoPath: string
+    tamanho: number
+  },
+): Promise<PreviewResult> {
+  const { clienteId, clienteNome, parsed, arquivoNome, tamanho } = args
+  const path = args.arquivoPath
+
   const resumo: ResumoImportacao = {
     subestipulantes: parsed.subestipulantes,
     topPrestadores: parsed.topPrestadores,
@@ -143,9 +198,9 @@ export async function processarUpload(
       cliente_id: clienteId,
       cliente_nome: clienteNome || null,
       apolice_numero: parsed.apolice,
-      arquivo_nome: file.name,
+      arquivo_nome: arquivoNome,
       arquivo_path: path,
-      tamanho: file.size,
+      tamanho,
       // Competência só é definida quando o usuário confirma.
       competencia: null,
       periodo_inicio: parsed.periodoInicio,
@@ -413,6 +468,13 @@ export async function confirmarImportacao(
     .eq('id', imp.id)
   if (updErr) return { error: updErr.message }
 
+  // Se a importação veio de um arquivo do coletor, a coleta sai da fila de
+  // "pronto para importação". Erro aqui não desfaz a importação confirmada.
+  await supabase
+    .from('coletas_sulamerica')
+    .update({ status: 'importado' })
+    .eq('importacao_id', imp.id)
+
   revalidatePath('/uploads')
   revalidatePath('/apolices')
   revalidatePath('/dashboard')
@@ -452,4 +514,123 @@ async function insertEmLotes(
     if (error) return `Falha ao gravar ${tabela}: ${error.message}`
   }
   return undefined
+}
+
+/** Competência do mês anterior ao de hoje (fuso de São Paulo): out/26 → 2026-09. */
+function competenciaMesAnterior(agora = new Date()): string {
+  const [ano, mes] = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Sao_Paulo',
+    year: 'numeric',
+    month: '2-digit',
+  })
+    .format(agora)
+    .split('-')
+    .map(Number)
+  const a = mes === 1 ? ano - 1 : ano
+  const m = mes === 1 ? 12 : mes - 1
+  return `${a}-${String(m).padStart(2, '0')}`
+}
+
+/**
+ * Pede ao coletor que busque agora o TXT do mês anterior no portal da
+ * SulAmérica. Só registra o pedido: o coletor confere a fila a cada 30 s,
+ * faz o login, lê o token no e-mail e deixa o arquivo pronto.
+ */
+export async function solicitarBuscaSulAmerica(): Promise<{
+  ok: boolean
+  competencia?: string
+  error?: string
+}> {
+  const auth = await requireAuthAction()
+  if ('error' in auth) return { ok: false, error: auth.error }
+
+  const supabase = await createClient()
+  const competencia = competenciaMesAnterior()
+
+  const { data: emAndamento } = await supabase
+    .from('coletas_sulamerica')
+    .select('id')
+    .in('status', ['pendente', 'executando', 'aguardando'])
+    .limit(1)
+  if (emAndamento && emAndamento.length > 0) {
+    return { ok: false, error: 'Já existe uma busca em andamento. Aguarde a conclusão.' }
+  }
+
+  const { error } = await supabase
+    .from('coletas_sulamerica')
+    .insert({ competencia, origem: 'manual', status: 'pendente' })
+  if (error) return { ok: false, error: error.message }
+
+  revalidatePath('/uploads')
+  return { ok: true, competencia }
+}
+
+/**
+ * Processa o arquivo baixado pelo coletor exatamente como um upload manual:
+ * gera a prévia e espera o usuário confirmar a competência. Trabalha sobre
+ * uma CÓPIA do arquivo — cancelar a importação apaga o arquivo dela, e o
+ * original baixado pelo coletor precisa continuar disponível.
+ */
+export async function processarArquivoColetado(
+  coletaId: string,
+  clienteId: string,
+  clienteNome: string,
+): Promise<PreviewResult> {
+  const auth = await requireAuthAction()
+  if ('error' in auth) return { error: auth.error }
+  if (!clienteId) return { error: 'Selecione um cliente.' }
+
+  const supabase = await createClient()
+  const { data: coleta } = await supabase
+    .from('coletas_sulamerica')
+    .select('id, status, arquivo_path, arquivo_nome')
+    .eq('id', coletaId)
+    .maybeSingle()
+  if (!coleta || coleta.status !== 'pronto' || !coleta.arquivo_path) {
+    return { error: 'Arquivo não está disponível para importação.' }
+  }
+
+  const { data: blob, error: dlErr } = await supabase.storage
+    .from(BUCKET)
+    .download(coleta.arquivo_path)
+  if (dlErr || !blob) {
+    return { error: `Não foi possível abrir o arquivo: ${dlErr?.message ?? 'vazio'}` }
+  }
+
+  const content = await blob.text()
+  let parsed: ParseResult
+  try {
+    parsed = parseSulAmerica(content)
+  } catch {
+    return { error: 'Não foi possível ler o arquivo. Verifique o layout.' }
+  }
+  if (parsed.totalEventos === 0) {
+    return { error: 'Nenhum evento de utilização foi encontrado no arquivo.' }
+  }
+  if (!parsed.apolice) {
+    return { error: 'Não foi possível identificar a apólice no arquivo.' }
+  }
+
+  const nome = coleta.arquivo_nome ?? 'sulamerica.txt'
+  const path = `${clienteId}/${Date.now()}-${nome.replace(/[^a-zA-Z0-9._-]/g, '_')}`
+  const { error: cpErr } = await supabase.storage
+    .from(BUCKET)
+    .copy(coleta.arquivo_path, path)
+  if (cpErr) return { error: `Falha ao preparar o arquivo: ${cpErr.message}` }
+
+  const previa = await registrarPrevia(supabase, {
+    clienteId,
+    clienteNome,
+    parsed,
+    arquivoNome: nome,
+    arquivoPath: path,
+    tamanho: blob.size,
+  })
+  if (previa.importacaoId) {
+    await supabase
+      .from('coletas_sulamerica')
+      .update({ importacao_id: previa.importacaoId })
+      .eq('id', coleta.id)
+  }
+  return previa
 }
