@@ -1,0 +1,20 @@
+{
+  "name": "winners-health-intelligence-coletor-sulamerica",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Baixa o TXT de contas pagas do portal SulAmérica Integra e deixa pronto para importação no Winners Health Intelligence.",
+  "type": "module",
+  "main": "src/index.mjs",
+  "scripts": {
+    "start": "node src/index.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "2.117.3",
+    "imapflow": "2.2.11",
+    "mailparser": "3.9.37",
+    "playwright": "1.64.0"
+  }
+}
