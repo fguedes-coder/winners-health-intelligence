@@ -21,12 +21,13 @@ const MESES = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julh
 
 /**
  * Entra no portal e baixa o TXT da competência.
- * @param {{ competencia: string, podeSolicitar: boolean, log: (m: string) => void }} opts
+ * @param {{ competencia: string, podeSolicitar: boolean, log: (m: string) => void,
+ *           credenciais: import('./credenciais.mjs').Credenciais }} opts
  *   competencia — 'AAAA-MM'; podeSolicitar — se o mês não estiver na lista,
  *   faz a Nova Solicitação (false quando já pedimos e só estamos conferindo).
  * @returns {Promise<{ nome: string, conteudo: Buffer }>}
  */
-export async function baixarContasPagas({ competencia, podeSolicitar, log }) {
+export async function baixarContasPagas({ competencia, podeSolicitar, log, credenciais }) {
   const [ano, mes] = competencia.split('-')
   const rotulo = `${mes}/${ano}` // como aparece na lista: "09/2026"
 
@@ -43,8 +44,8 @@ export async function baixarContasPagas({ competencia, podeSolicitar, log }) {
     // 1. Login
     log('abrindo o portal')
     await page.goto(config.portal.urlLogin, { waitUntil: 'domcontentloaded' })
-    await page.getByPlaceholder('LOGIN').fill(config.portal.login)
-    await page.getByPlaceholder('SENHA').fill(config.portal.senha)
+    await page.getByPlaceholder('LOGIN').fill(credenciais.portal.login)
+    await page.getByPlaceholder('SENHA').fill(credenciais.portal.senha)
     const cliqueEntrar = Date.now()
     await page.getByRole('button', { name: 'ENTRAR' }).click()
 
@@ -59,7 +60,7 @@ export async function baixarContasPagas({ competencia, podeSolicitar, log }) {
       throw new Error(`Login não aceito pelo portal${alerta ? `: ${alerta}` : ''}.`)
     }
     log('aguardando o token no e-mail')
-    const token = await aguardarToken({ desde: cliqueEntrar })
+    const token = await aguardarToken({ desde: cliqueEntrar, email: credenciais.email })
     await campoToken.fill(token)
     await campoToken.press('Enter')
 

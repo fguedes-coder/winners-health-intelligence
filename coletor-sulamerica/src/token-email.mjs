@@ -13,25 +13,26 @@ const dormir = (ms) => new Promise((r) => setTimeout(r, ms))
 
 /**
  * Espera o e-mail do token chegar (costuma levar ~2 min) e devolve o código.
- * @param {{ desde: number, timeoutMs?: number, intervaloMs?: number }} opts
+ * @param {{ desde: number, email: { usuario: string, senha: string },
+ *           timeoutMs?: number, intervaloMs?: number }} opts
  *   desde — instante (ms) do clique em ENTRAR; mensagens anteriores são ignoradas.
  */
-export async function aguardarToken({ desde, timeoutMs = 6 * 60_000, intervaloMs = 15_000 }) {
+export async function aguardarToken({ desde, email, timeoutMs = 6 * 60_000, intervaloMs = 15_000 }) {
   const limite = Date.now() + timeoutMs
   while (Date.now() < limite) {
-    const token = await procurarToken(desde)
+    const token = await procurarToken(desde, email)
     if (token) return token
     await dormir(intervaloMs)
   }
   throw new Error('O token de acesso não chegou ao e-mail em 6 minutos.')
 }
 
-async function procurarToken(desde) {
+async function procurarToken(desde, email) {
   const cliente = new ImapFlow({
     host: config.imap.host,
     port: config.imap.porta,
     secure: true,
-    auth: { user: config.imap.usuario, pass: config.imap.senha },
+    auth: { user: email.usuario, pass: email.senha },
     logger: false,
   })
   await cliente.connect()
