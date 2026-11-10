@@ -6,7 +6,7 @@ import { NextResponse } from 'next/server'
 import { requireAuthApi } from '@/lib/auth/require-user'
 import { getDashboardData, getPainel } from '@/lib/queries'
 import { getWinnersDataset } from '@/lib/winners-data-server'
-import { gerarAnaliseExecutiva } from '@/lib/analise-ia'
+import { competenciaPorExtenso, gerarAnaliseExecutiva, sinistralidadeAcumulada } from '@/lib/analise-ia'
 import { gerarAnaliseWinnersDecide } from '@/lib/winners-decide-analysis'
 import { resumirRadar } from '@/lib/radar-agg'
 import { resumirSaudeMental } from '@/lib/saude-mental-agg'
@@ -191,9 +191,22 @@ export async function GET(request: NextRequest) {
   const eventosDoRecorte = mesSet.size
     ? eventos.filter((e) => e.competencia && mesSet.has(e.competencia))
     : eventos
+  // Acumulado do ano contratual: é a base da renovação. Sem ele a IA lia
+  // out/26 (137,9%) como ameaça à renovação com o contrato em 45,8%.
+  const acumulado = sinistralidadeAcumulada(historico)
   const analiseIA = await gerarAnaliseWinnersDecide(
     eventosDoRecorte,
     faturaPorCompetencia,
+    {},
+    {
+      contextoContrato:
+        acumulado !== null && historico.length >= 2
+          ? {
+              sinistralidadeAcumuladaPct: acumulado,
+              periodo: `${competenciaPorExtenso(historico[0].competencia)} a ${competenciaPorExtenso(historico[historico.length - 1].competencia)}`,
+            }
+          : null,
+    },
   )
 
   // Mini-resumos dos 3 maiores ofensores financeiros (páginas individuais).

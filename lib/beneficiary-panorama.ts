@@ -10,6 +10,7 @@
 // ===========================================================================
 
 import type { EventoDetalhado } from '@/lib/queries'
+import { contarEpisodiosInternacao } from '@/lib/internacoes'
 import {
   classificarEvento,
   ehSaudeMental,
@@ -333,7 +334,6 @@ export function getBeneficiaryPanorama(
     categorias.add(cat)
 
     if (e.internacao) {
-      internacoes++
       if (ultimaComp && e.competencia === ultimaComp) internacaoRecente = true
     }
     if (cat === 'Pronto-Socorro') prontoSocorro++
@@ -367,6 +367,10 @@ export function getBeneficiaryPanorama(
   }
 
   const eventosTotal = meus.length
+  // Internações por EPISÓDIO: uma internação vem em várias linhas (diárias,
+  // honorários, materiais). Contar linhas fazia toda internação virar
+  // "reinternação".
+  internacoes = contarEpisodiosInternacao(meus)
 
   // Timeline por competência (ascendente).
   const compsOrd = [...porComp.entries()].sort((a, b) => a[0].localeCompare(b[0]))
@@ -388,7 +392,7 @@ export function getBeneficiaryPanorama(
 
   const { score, faixa, fatores } = calcularScore({
     internacoes,
-    reinternacao: internacoes >= 2,
+    reinternacao: internacoes >= 2, // episódios, não linhas
     prontoSocorro,
     saudeMental,
     procedimentosAltoCusto,

@@ -31,6 +31,12 @@ export const PESOS_RISCO = {
 // Teto máximo de pontos por fator, para evitar superpontuação causada por
 // eventos repetitivos (ex.: muitas idas ao pronto-socorro). Fatores sem teto
 // (internação, bônus únicos) não aparecem aqui.
+/**
+ * Idas ao pronto-socorro a partir das quais o uso é "recorrente". Uma ida só
+ * costuma ser a porta de entrada de uma internação, não um padrão.
+ */
+export const MIN_PS_RECORRENTE = 3
+
 export const CAPS_RISCO = {
   prontoSocorro: 25,
   saudeMental: 20,
@@ -425,8 +431,10 @@ export function gerarPlanoAcao(params: {
     })
   }
 
-  // Uso recorrente de pronto-socorro → direcionamento assistencial
-  if (fatorChaves.has('prontoSocorro') || alertaChaves.has('ps-excessivo')) {
+  // Uso recorrente de pronto-socorro → direcionamento assistencial. O fator
+  // existe com uma única ida (5 pontos); "recorrente" exige MIN_PS_RECORRENTE.
+  const pontosPS = params.fatores.find((f) => f.chave === 'prontoSocorro')?.pontos ?? 0
+  if (pontosPS >= MIN_PS_RECORRENTE * PESOS_RISCO.prontoSocorro || alertaChaves.has('ps-excessivo')) {
     recs.push({
       chave: 'direcionamento',
       icone: 'route',

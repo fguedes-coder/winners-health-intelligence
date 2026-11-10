@@ -1,3 +1,5 @@
+import { contarInternacoesPorPessoa } from '@/lib/internacoes'
+
 // Parser do arquivo TXT de utilização da SulAmérica (layout DMS).
 // Formato: CSV com delimitador ";" e qualificador de texto estilo Excel ="...".
 // Cada linha (após o cabeçalho) representa um evento de utilização.
@@ -247,7 +249,6 @@ export function parseSulAmerica(content: string): ParseResult {
   const dependentesGlobais = new Set<string>()
   let valorTotalUtilizacao = 0
   let valorTotalEmpresa = 0
-  let totalInternacoes = 0
   let totalSaudeMental = 0
   let periodoInicio: string | null = null
   let periodoFim: string | null = null
@@ -279,7 +280,6 @@ export function parseSulAmerica(content: string): ParseResult {
 
     valorTotalUtilizacao += e.valorPago
     valorTotalEmpresa += e.valorEmpresa
-    if (e.internacao) totalInternacoes++
     if (e.saudeMental) totalSaudeMental++
 
     if (e.dataAtendimento) {
@@ -430,7 +430,9 @@ export function parseSulAmerica(content: string): ParseResult {
     dependentesUnicos: dependentesGlobais.size,
     valorTotalUtilizacao,
     valorTotalEmpresa,
-    totalInternacoes,
+    // Internações por episódio, não por linha: uma internação chega como
+    // várias linhas (diárias, honorários, materiais) — ver lib/internacoes.
+    totalInternacoes: contarInternacoesPorPessoa(eventos, (e) => e.pessoaId).total,
     totalSaudeMental,
     subestipulantes,
     topPrestadores,
