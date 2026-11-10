@@ -65,6 +65,7 @@ function extrairFatos(payload: PayloadIA, faturaTotal: number | null): FatosCart
     saudeMentalUtilizacoes: payload.saude_mental.utilizacoes,
     vidasRiscoCritico: payload.vidas_risco_critico,
     competencias: payload.competencias_analisadas,
+    acumuladoContratoPct: payload.contexto_contrato?.sinistralidade_acumulada_pct ?? null,
   }
 }
 

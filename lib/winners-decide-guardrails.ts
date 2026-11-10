@@ -26,6 +26,12 @@ export type FatosCarteira = {
   vidasRiscoCritico: number
   /** Competências distintas no recorte analisado. */
   competencias: number
+  /**
+   * Sinistralidade acumulada do ano contratual (%), quando o relatório tem
+   * série. É a base da renovação: falar de renovação/reajuste sem citá-la
+   * leva o leitor a julgar o contrato pelo mês isolado.
+   */
+  acumuladoContratoPct?: number | null
 }
 
 /** "285.107" / "2.910,50" → número. */
@@ -105,6 +111,17 @@ const RE_COMPARACAO_TEMPORAL =
 // quando o que liderava o custo era laboratório de rotina.
 const RE_CORTE_EXAMES =
   /(?:auditori[ao]s?|reduzir|redu[çc][ãa]o|cortar|corte|revisar\s+a\s+necessidade)[^.\n]{0,40}?\bexames?\b|\bexames?\s+(?:redundantes|desnecess[áa]rios)/i
+// Renovação/reajuste mencionados no texto.
+const RE_RENOVACAO = /\b(?:renova[çc][ãa]o|renovar|reajustes?)\b/i
+// Adjetivos de juízo sobre a utilização sem referência comparativa no
+// payload (regra 16 do prompt). Em out/26 a IA escreveu "uso excessivo do
+// pronto-socorro" para 30 idas entre 91 usuários.
+// "Desnecessária" só é barrada quando qualifica INTERNAÇÕES (não há
+// diagnóstico no payload); "reduzir visitas desnecessárias ao PS" é
+// recomendação legítima e continua passando.
+const RE_ADJETIVO_SEM_BASE =
+  /\b(?:excessiv[oa]s?|inadequad[oa]s?|abusiv[oa]s?)\b|interna[çc](?:ão|ões)\s+(?:\S+\s+){0,2}?desnecess[áa]ri[oa]s?/i
+
 const RE_TOP_PCT_VIDAS = /\btop\s+\d+(?:[.,]\d+)?\s*%\s+(?:das|dos)\s+(?:vidas|benefici[áa]rios)/i
 
 export type ResultadoValidacao = {
@@ -160,6 +177,26 @@ export function validarAnaliseIA(
     // modelo sabe exatamente o que tirar na segunda tentativa.
     violacoes.push(
       `comparação com período anterior ("${comparacao[0]}"), mas o recorte tem uma única competência`,
+    )
+  }
+
+  // 3b) renovação/reajuste sem o acumulado do contrato
+  if (fatos.acumuladoContratoPct != null && RE_RENOVACAO.test(texto)) {
+    const v = fatos.acumuladoContratoPct
+    const comVirgula = v.toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 })
+    const comPonto = v.toFixed(1)
+    if (!texto.includes(comVirgula) && !texto.includes(comPonto)) {
+      violacoes.push(
+        `fala de renovação/reajuste sem citar a sinistralidade acumulada do contrato (${comVirgula}%), que é a base da renovação`,
+      )
+    }
+  }
+
+  // 3c) juízo de valor sem referência comparativa
+  const adjetivo = RE_ADJETIVO_SEM_BASE.exec(texto)
+  if (adjetivo) {
+    violacoes.push(
+      `qualifica a utilização como "${adjetivo[0]}" sem referência comparativa nos dados; descreva o número em vez de julgá-lo`,
     )
   }
 
