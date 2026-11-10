@@ -601,7 +601,7 @@ function montarPlanoAcao(
 
   const conclusao =
     beneficiariosPrioritarios > 0
-      ? `A análise identificou ${beneficiariosPrioritarios} beneficiário(s) em monitoramento prioritário, representando ${ctx.total > 0 ? ((ctx.impactoFinanceiro / (valorTotalCarteira || 1)) * 100).toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 }) : '0'}% dos custos assistenciais da carteira. Recomenda-se a implementação das ações preventivas sugeridas, com foco em ${listaAcoes}. O potencial impacto financeiro monitorado é de ${formatMoeda(ctx.impactoFinanceiro)}, com oportunidade estimada de economia de ${formatMoeda(economiaPotencial)}.`
+      ? `A análise identificou ${beneficiariosPrioritarios} beneficiário(s) em monitoramento prioritário, representando ${(valorTotalCarteira > 0 ? (valorPrioritario / valorTotalCarteira) * 100 : 0).toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}% dos custos assistenciais da carteira. Recomenda-se a implementação das ações preventivas sugeridas, com foco em ${listaAcoes}. O potencial impacto financeiro monitorado é de ${formatMoeda(valorPrioritario)}, com oportunidade estimada de economia de ${formatMoeda(economiaPotencial)}.`
       : 'Sem beneficiários prioritários no período. Manter acompanhamento preventivo de rotina para preservar a sustentabilidade do contrato.'
 
   return {
@@ -613,7 +613,10 @@ function montarPlanoAcao(
       critico: ctx.critico,
     },
     prioridadeCritica: criticaSet.size,
-    potencialImpacto: ctx.impactoFinanceiro,
+    // Valor das vidas DESTE plano (faixa moderada ou acima). O impacto do
+    // Radar conta só alto/crítico e aparecia "R$ 0" ao lado de uma vida de
+    // R$ 8.041 em out/26.
+    potencialImpacto: valorPrioritario,
     exposicaoPct,
     valorPrioritario,
     economiaPotencial,

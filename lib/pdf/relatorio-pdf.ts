@@ -1855,7 +1855,11 @@ class Relatorio {
     this.sectionTitle(numero, 'Oportunidade de Economia')
 
     // Bloco premium de destaque
-    const cardH = 112
+    const n = plano.beneficiariosPrioritarios
+    const baseTexto = `Base: redução conservadora de ${(plano.taxaEconomia * 100).toFixed(0)}% da utilização evitável ${n === 1 ? 'da vida prioritária' : `das ${n.toLocaleString('pt-BR')} vidas prioritárias`}. Internações agudas isoladas não entram na base: gestão de caso não as evita.`
+    this.font('normal', 9)
+    const baseLinhas = doc.splitTextToSize(baseTexto, USABLE_W - 48) as string[]
+    const cardH = 100 + baseLinhas.length * 12
     this.ensure(cardH + 12)
     const y0 = this.y
     this.fill(GREEN_LT)
@@ -1874,11 +1878,7 @@ class Relatorio {
     doc.text(formatBRL(plano.economiaPotencial), MARGIN + 24, y0 + 74)
     this.ink(MUTED)
     this.font('normal', 9)
-    doc.text(
-      `Base: redução conservadora de ${(plano.taxaEconomia * 100).toFixed(0)}% da utilização evitável das ${plano.beneficiariosPrioritarios.toLocaleString('pt-BR')} vidas prioritárias. Internações agudas isoladas não entram na base: gestão de caso não as evita.`,
-      MARGIN + 24,
-      y0 + 96,
-    )
+    doc.text(baseLinhas, MARGIN + 24, y0 + 96)
     this.y = y0 + cardH + 16
 
     this.paragraph(
@@ -2332,7 +2332,7 @@ class Relatorio {
         ]),
       )
       this.nota(
-        'Cada evento é contabilizado em uma única categoria. Eventos com internação entram em "Internações" independentemente da origem (pronto-socorro, obstétrica ou psiquiátrica), de modo que esta tabela reconcilia com o indicador de internações do resumo executivo. As utilizações de saúde mental são apuradas por eixo clínico, em seção própria.',
+        `Cada evento é contabilizado em uma única categoria. Eventos com internação entram em "Internações" independentemente da origem (pronto-socorro, obstétrica ou psiquiátrica). Nesta tabela, "Eventos" são lançamentos da conta: uma internação gera vários (diárias, honorários, materiais)${k.internacoes > 0 ? ` — aqui, ${(composicao.find((c) => c.nome === 'Internações')?.eventos ?? 0).toLocaleString('pt-BR')} lançamentos correspondem a ${k.internacoes.toLocaleString('pt-BR')} ${k.internacoes === 1 ? 'internação' : 'internações'}, o número do resumo executivo` : ''}. As utilizações de saúde mental são apuradas por eixo clínico, em seção própria.`,
       )
     }
 
