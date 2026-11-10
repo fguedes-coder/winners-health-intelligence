@@ -21,6 +21,7 @@ import {
   formatCompetencia,
 } from '@/lib/categorias'
 import { MIN_COMPETENCIAS_PROJECAO } from '@/lib/winners-decide-guardrails'
+import { contarInternacoesPorPessoa } from '@/lib/internacoes'
 import { K_ANONIMATO } from '@/lib/privacidade-clinica'
 import { resumirRadar, type ResumoRadar } from '@/lib/radar-agg'
 
@@ -481,13 +482,20 @@ function gerarInsights(
     if (e.competencia) {
       const a = porComp.get(e.competencia) ?? { prontoSocorro: 0, internacoes: 0, saudeMental: 0 }
       if (cat === 'Pronto-Socorro') a.prontoSocorro++
-      if (e.internacao) a.internacoes++
       if (ehSaudeMental(e)) a.saudeMental++
       porComp.set(e.competencia, a)
     }
-    if (e.internacao) {
-      internacoesPorBenef.set(e.beneficiario, (internacoesPorBenef.get(e.beneficiario) ?? 0) + 1)
-    }
+  }
+  // Internações em EPISÓDIOS (lib/internacoes): uma internação chega em várias
+  // linhas, e contá-las inventava reinternações.
+  for (const [comp, a] of porComp) {
+    a.internacoes = contarInternacoesPorPessoa(
+      eventos.filter((e) => e.competencia === comp),
+      (e) => e.beneficiario,
+    ).total
+  }
+  for (const [b, n] of contarInternacoesPorPessoa(eventos, (e) => e.beneficiario).porPessoa) {
+    internacoesPorBenef.set(b, n)
   }
   const comps = [...porComp.keys()].sort()
   const ultima = comps[comps.length - 1]
@@ -768,6 +776,8 @@ REGRAS OBRIGATÓRIAS
 15. Não afirme estabilidade, variação, crescimento ou queda em relação a competências anteriores quando "competencias_analisadas" for 1 — com uma competência não há comparação possível.
 16. Não qualifique uma utilização como "elevada", "excessiva" ou "dependência" sem uma referência comparativa presente no payload; descreva o dado (ex.: "o pronto-socorro responde por 28,2% do custo em 19 eventos").
 17. Nunca recomende reduzir, cortar, auditar ou "revisar a necessidade" de exames: são, em sua maioria, laboratório e rastreamento preventivo, e o relatório recomenda AMPLIAR a prevenção. Quando exames liderarem o custo, trate como uso da rede diagnóstica e recomende direcionamento para prestadores de melhor custo-efetividade e protocolos de rastreamento por faixa etária — nunca menos exames.
+18. Renovação e reajuste se baseiam na sinistralidade ACUMULADA do contrato, não no mês isolado. Quando houver "contexto_contrato", cite "sinistralidade_acumulada_pct" ao falar de renovação e não diga que o mês, sozinho, ameaça a renovação. Use a palavra "renovação" e não estime percentual de reajuste. Sem "contexto_contrato", não fale de impacto na renovação.
+19. Internação aguda isolada (um episódio) não é "reinternação" nem caso crônico. Só fale em reinternação se "reinternacoes" for maior que zero.
 
 FREQUÊNCIA NÃO É IMPACTO FINANCEIRO
 - Nunca conclua que um fator é o principal impacto financeiro apenas pela quantidade de ocorrências.
@@ -876,6 +886,14 @@ export type PayloadIA = {
   crescimento_custo_pct: number
   /** Competências distintas no recorte — base para admitir projeção. */
   competencias_analisadas: number
+  /**
+   * Sinistralidade acumulada do ano contratual (desde o aniversário). É a base
+   * da renovação — o mês isolado não é. Ausente fora do relatório mensal.
+   */
+  contexto_contrato?: {
+    sinistralidade_acumulada_pct: number
+    periodo: string
+  }
   /** false quando há menos de MIN_COMPETENCIAS_PROJECAO competências. */
   serie_historica_suficiente: boolean
   tendencia_sinistralidade_projetada: number | null
@@ -940,11 +958,15 @@ export function montarPayloadIA(
       }
     }
     if (cat === 'Pronto-Socorro') prontoSocorro++
-    if (e.internacao) {
-      internacoes++
-      internacoesPorBenef.set(e.beneficiario, (internacoesPorBenef.get(e.beneficiario) ?? 0) + 1)
-    }
   }
+  // Internações e reinternações em EPISÓDIOS, não em linhas da conta.
+  const internacoesEpisodios = contarInternacoesPorPessoa(filtrados, (e) => e.beneficiario)
+  internacoes = internacoesEpisodios.total
+  for (const [b, n] of internacoesEpisodios.porPessoa) internacoesPorBenef.set(b, n)
+  // "ocorrencias" da categoria Internações também em episódios: o modelo lia
+  // 84 linhas como "84 internações".
+  const catInternacoes = porCategoria.get('Internações')
+  if (catInternacoes) catInternacoes.ocorrencias = internacoes
   const reinternacoes = [...internacoesPorBenef.values()].filter((n) => n >= 2).length
 
   // Custo por categoria ordenado por custo (não por frequência). Inclui as

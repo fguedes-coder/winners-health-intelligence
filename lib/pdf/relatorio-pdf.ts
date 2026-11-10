@@ -1875,7 +1875,7 @@ class Relatorio {
     this.ink(MUTED)
     this.font('normal', 9)
     doc.text(
-      `Base: redução conservadora de ${(plano.taxaEconomia * 100).toFixed(0)}% da utilização das ${plano.beneficiariosPrioritarios.toLocaleString('pt-BR')} vidas prioritárias.`,
+      `Base: redução conservadora de ${(plano.taxaEconomia * 100).toFixed(0)}% da utilização evitável das ${plano.beneficiariosPrioritarios.toLocaleString('pt-BR')} vidas prioritárias. Internações agudas isoladas não entram na base: gestão de caso não as evita.`,
       MARGIN + 24,
       y0 + 96,
     )
@@ -2370,6 +2370,19 @@ class Relatorio {
     this.paragraph(
       'Prestadores e redes com maior volume financeiro no período, base para negociação e direcionamento de rede.',
     )
+    // No modo anonimizado, prestador sensível com menos de K vidas SAI da
+    // tabela. Trocar o nome pela especialidade não bastava: em out/26 a linha
+    // "Prestador especializado em pediatria — 27 eventos, R$ 6.739, 6,0%" era
+    // idêntica à do RISCO-005 no Top Utilizadores, e o cruzamento revelava uma
+    // criança internada. No modo nominal (uso interno) a regra antiga continua.
+    const sensiveis = data.topPrestadores.filter(
+      (p) => rotuloPrestadorSeguro(p.nome, p.beneficiarios).suprimido,
+    )
+    const listaPrestadores = (
+      this.anonimizado
+        ? data.topPrestadores.filter((p) => !rotuloPrestadorSeguro(p.nome, p.beneficiarios).suprimido)
+        : data.topPrestadores
+    ).slice(0, 10)
     this.table(
       [
         { header: '#', width: 30, align: 'right' },
@@ -2378,7 +2391,7 @@ class Relatorio {
         { header: 'Valor', width: 100, align: 'right' },
         { header: '% do total', width: USABLE_W - 420, align: 'right' },
       ],
-      data.topPrestadores.slice(0, 10).map((p, i) => [
+      listaPrestadores.map((p, i) => [
         String(i + 1),
         // Razão social que revela especialidade sensível é substituída pela
         // especialidade quando o prestador atendeu menos de K vidas.
@@ -2388,11 +2401,11 @@ class Relatorio {
         k.valorUtilizado > 0 ? pct((p.valor / k.valorUtilizado) * 100) : '—',
       ]),
     )
-    if (
-      data.topPrestadores
-        .slice(0, 10)
-        .some((p) => rotuloPrestadorSeguro(p.nome, p.beneficiarios).suprimido)
-    ) {
+    if (this.anonimizado && sensiveis.length > 0) {
+      this.nota(
+        `Prestadores cuja razão social revela especialidade (saúde da mulher, oncologia, saúde mental, pediatria, infectologia) e que atenderam menos de ${K_ANONIMATO} vidas no período não são listados: com poucas vidas, os valores do prestador permitiriam identificar o beneficiário em outras tabelas do relatório.`,
+      )
+    } else if (listaPrestadores.some((p) => rotuloPrestadorSeguro(p.nome, p.beneficiarios).suprimido)) {
       this.nota(
         `Prestadores cuja razão social revela especialidade (saúde da mulher, oncologia, saúde mental, pediatria, infectologia) e que atenderam menos de ${K_ANONIMATO} vidas no período são identificados pela especialidade, não pelo nome — a combinação nome + baixa contagem revelaria a condição de saúde do beneficiário.`,
       )

@@ -8,6 +8,7 @@
 // ===========================================================================
 
 import type { EventoDetalhado } from '@/lib/queries'
+import { contarEpisodiosInternacao, type LancamentoInternacao } from '@/lib/internacoes'
 import { classificarEvento, ehSaudeMental, mesCurto } from '@/lib/categorias'
 import {
   criarAnonimizador,
@@ -231,6 +232,9 @@ export function resumirRadar(
     categorias: Set<string>
     porComp: Map<string, number>
     compsInternacao: Set<string>
+    /** Lançamentos de internação; viram EPISÓDIOS antes do score. */
+    lancInternacao: LancamentoInternacao[]
+    valorInternacao: number
   }
 
   const mapa = new Map<string, Agg>()
@@ -251,6 +255,8 @@ export function resumirRadar(
         categorias: new Set(),
         porComp: new Map(),
         compsInternacao: new Set(),
+        lancInternacao: [],
+        valorInternacao: 0,
       }
       mapa.set(e.beneficiario, a)
     }
@@ -258,7 +264,8 @@ export function resumirRadar(
     a.valorTotal += e.valorPago
     a.categorias.add(e.categoria)
     if (e.internacao) {
-      a.internacoes++
+      a.lancInternacao.push(e)
+      a.valorInternacao += e.valorPago
       if (ultimaComp && e.competencia === ultimaComp) a.internacaoRecente = true
       if (e.competencia) a.compsInternacao.add(e.competencia)
     }
@@ -305,6 +312,9 @@ export function resumirRadar(
   let valorTotalCarteira = 0
 
   for (const [carteirinha, a] of mapa) {
+    // Uma internação chega como várias linhas; contar linhas marcava toda
+    // pessoa internada como "reinternação" (score 100, P1) em out/26.
+    a.internacoes = contarEpisodiosInternacao(a.lancInternacao)
     valorTotalCarteira += a.valorTotal
     const comps = [...a.porComp.entries()].sort((x, y) => x[0].localeCompare(y[0]))
     let crescimentoAcelerado = false
@@ -476,7 +486,12 @@ type CalcMinimo = {
   faixa: FaixaRisco
   fatores: FatorRisco[]
   alertas: AlertaRisco[]
-  agg: { valorTotal: number; ev: { displayBeneficiario: string } }
+  agg: {
+    valorTotal: number
+    internacoes: number
+    valorInternacao: number
+    ev: { displayBeneficiario: string }
+  }
 }
 
 function montarPlanoAcao(
@@ -498,7 +513,15 @@ function montarPlanoAcao(
     (s, c) => s + c.agg.valorTotal,
     0,
   )
-  const economiaPotencial = valorPrioritario * TAXA_ECONOMIA_PREVENTIVA
+  // Base da economia: o custo que gestão de saúde consegue influenciar. Uma
+  // internação aguda isolada (apendicite, fratura, cálculo renal) não se evita
+  // com gestão de caso — o custo dela fica fora. Com reinternação (2+
+  // episódios), entra: aí sim há o que evitar.
+  const baseEconomia = prioritarios.reduce(
+    (s, c) => s + c.agg.valorTotal - (c.agg.internacoes <= 1 ? c.agg.valorInternacao : 0),
+    0,
+  )
+  const economiaPotencial = baseEconomia * TAXA_ECONOMIA_PREVENTIVA
   const exposicaoPct = ctx.total > 0 ? (beneficiariosPrioritarios / ctx.total) * 100 : 0
 
   // Ordena prioritários por score/valor e monta linhas (uma por ação).

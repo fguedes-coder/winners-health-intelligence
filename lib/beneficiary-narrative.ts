@@ -617,7 +617,7 @@ export function classificarRiscoFuturoSinais(
   motivos.push(`Score de risco assistencial ${d.score_risco}/100 (${d.faixa_risco})`)
 
   // Internações / reinternações — principal driver de gravidade.
-  if (d.internacoes.competencias_com_internacao >= 2) {
+  if (d.internacoes.reinternacao && d.internacoes.competencias_com_internacao >= 2) {
     gravidade = Math.max(gravidade, 3)
     motivos.push(
       `Internações em múltiplas competências (${d.internacoes.competencias_com_internacao})`,
@@ -761,7 +761,7 @@ export function classificarPrioridadeSinais(
   motivos.push(
     `Índice de urgência de intervenção ${prio.valor}/100 (combina risco assistencial, impacto financeiro e alertas)`,
   )
-  if (d.internacoes.competencias_com_internacao >= 2)
+  if (d.internacoes.reinternacao && d.internacoes.competencias_com_internacao >= 2)
     motivos.push(
       `Internações em múltiplas competências (${d.internacoes.competencias_com_internacao})`,
     )
@@ -819,7 +819,7 @@ export function classificarEconomiaSinais(
   let pts = 0
 
   // Reinternações / internações recorrentes: maior potencial evitável.
-  if (d.internacoes.competencias_com_internacao >= 2) {
+  if (d.internacoes.reinternacao && d.internacoes.competencias_com_internacao >= 2) {
     pts += 3
     motivos.push(
       `Internações em múltiplas competências (${d.internacoes.competencias_com_internacao}) — potencial de evitar reinternações com gestão de caso e acompanhamento pós-alta`,

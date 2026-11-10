@@ -16,6 +16,7 @@ import {
   rotuloPrestador,
 } from '@/lib/prestadores'
 import { beneficiarioLabel } from '@/lib/display-prefs'
+import { contarInternacoesPorPessoa } from '@/lib/internacoes'
 import { getBenefDisplay } from '@/lib/display-prefs-server'
 import {
   loadMasterIndex,
@@ -789,6 +790,9 @@ export async function getDashboardData(
   const subsAtivos = new Set<string>()
   let valorUtilizado = 0
   let internacoes = 0
+  // Lançamentos de internação (pessoa, mês, data): a contagem final é por
+  // EPISÓDIO (lib/internacoes), não por linha — uma internação vem em várias.
+  const lancInternacao: { pid: string; mes: string | null; dataAtendimento: string | null; internacao: true }[] = []
   let saudeMental = 0
   let periodoInicio: string | null = null
   let periodoFim: string | null = null
@@ -858,7 +862,8 @@ export async function getDashboardData(
       grupoEstatistico: e.grupo_estatistico,
       saudeMental: e.saude_mental,
     })
-    if (eventoInternacao) internacoes++
+    if (eventoInternacao)
+      lancInternacao.push({ pid, mes: mesDoEvento(e), dataAtendimento: e.data_atendimento ?? null, internacao: true })
     if (eventoSaudeMental) saudeMental++
 
     if (e.data_atendimento) {
@@ -978,7 +983,6 @@ export async function getDashboardData(
       cm.pessoas.add(pid)
       cm.eventos++
       cm.valor += valor
-      if (eventoInternacao) cm.internacoes++
       if (eventoSaudeMental) cm.saudeMental++
       if (eventoSaudeMental) cm.saudeMentalValor += valor
       compMap.set(mes, cm)
@@ -1091,6 +1095,19 @@ export async function getDashboardData(
   }
 
   // Resumo por competência (ordenado)
+  internacoes = contarInternacoesPorPessoa(lancInternacao, (l) => l.pid).total
+  const lancPorMes = new Map<string, typeof lancInternacao>()
+  for (const l of lancInternacao) {
+    if (!l.mes) continue
+    const g = lancPorMes.get(l.mes)
+    if (g) g.push(l)
+    else lancPorMes.set(l.mes, [l])
+  }
+  for (const [mes, g] of lancPorMes) {
+    const cm = compMap.get(mes)
+    if (cm) cm.internacoes = contarInternacoesPorPessoa(g, (l) => l.pid).total
+  }
+
   const resumoCompetencia: ResumoCompetenciaRow[] = [...compMap.entries()]
     .sort((a, b) => (a[0] < b[0] ? -1 : 1))
     .map(([mes, v]) => {

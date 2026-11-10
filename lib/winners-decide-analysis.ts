@@ -51,6 +51,8 @@ export type OpcoesAnalise = {
   modo?: ModoAnalise
   /** Pergunta do usuário; usada apenas no modo 'chat'. */
   pergunta?: string
+  /** Sinistralidade acumulada do ano contratual, para a IA falar de renovação. */
+  contextoContrato?: { sinistralidadeAcumuladaPct: number; periodo: string } | null
 }
 
 /** Fatos do período contra os quais o texto gerado é conferido. */
@@ -96,6 +98,12 @@ export async function gerarAnaliseWinnersDecide(
   const pergunta = (opcoes.pergunta ?? '').trim()
   const filtrosCompletos: WinnersFiltros = { ...FILTROS_VAZIOS, ...filtros }
   const payload = montarPayloadIA(eventos, filtrosCompletos, faturaPorCompetencia)
+  if (opcoes.contextoContrato) {
+    payload.contexto_contrato = {
+      sinistralidade_acumulada_pct: Number(opcoes.contextoContrato.sinistralidadeAcumuladaPct.toFixed(1)),
+      periodo: opcoes.contextoContrato.periodo,
+    }
+  }
 
   // Teto monetário do período: a fatura pode superar o valor utilizado e é
   // citação legítima; qualquer valor acima dela é dado de outro recorte.
