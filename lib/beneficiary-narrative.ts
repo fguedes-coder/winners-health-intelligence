@@ -639,11 +639,18 @@ export function classificarRiscoFuturoSinais(
     )
   }
 
-  // Impacto no custo da carteira.
+  // Impacto no custo da carteira. Custo que JÁ aconteceu não é, sozinho,
+  // risco FUTURO: uma internação aguda isolada (apendicite, fratura) pode
+  // responder por 24% do mês e não indicar custo recorrente. Só eleva a
+  // Crítico com sinal clínico de continuidade; sem ele, no máximo Moderado.
+  const sinalDeContinuidade =
+    d.internacoes.reinternacao ||
+    d.continuidade.tratamento_continuo ||
+    d.alto_custo.tem_itens
   if (d.participacao_custo_carteira_pct >= 20) {
-    gravidade = Math.max(gravidade, 3)
+    gravidade = Math.max(gravidade, sinalDeContinuidade ? 3 : 1)
     motivos.push(
-      `Alta concentração no custo da carteira (${pct(d.participacao_custo_carteira_pct)})`,
+      `Alta concentração no custo da carteira (${pct(d.participacao_custo_carteira_pct)})${sinalDeContinuidade ? '' : ' — custo pontual, sem sinal de continuidade'}`,
     )
   } else if (d.participacao_custo_carteira_pct >= 5) {
     gravidade = Math.max(gravidade, 1)

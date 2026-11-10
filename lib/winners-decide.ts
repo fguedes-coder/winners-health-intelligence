@@ -777,7 +777,7 @@ REGRAS OBRIGATÓRIAS
 16. Não qualifique uma utilização como "elevada", "excessiva" ou "dependência" sem uma referência comparativa presente no payload; descreva o dado (ex.: "o pronto-socorro responde por 28,2% do custo em 19 eventos").
 17. Nunca recomende reduzir, cortar, auditar ou "revisar a necessidade" de exames: são, em sua maioria, laboratório e rastreamento preventivo, e o relatório recomenda AMPLIAR a prevenção. Quando exames liderarem o custo, trate como uso da rede diagnóstica e recomende direcionamento para prestadores de melhor custo-efetividade e protocolos de rastreamento por faixa etária — nunca menos exames.
 18. Renovação e reajuste se baseiam na sinistralidade ACUMULADA do contrato, não no mês isolado. Quando houver "contexto_contrato", cite "sinistralidade_acumulada_pct" ao falar de renovação e não diga que o mês, sozinho, ameaça a renovação. Use a palavra "renovação" e não estime percentual de reajuste. Sem "contexto_contrato", não fale de impacto na renovação.
-19. Internação aguda isolada (um episódio) não é "reinternação" nem caso crônico. Só fale em reinternação se "reinternacoes" for maior que zero.
+19. Internação aguda isolada (um episódio) não é "reinternação" nem caso crônico. Só fale em reinternação se "reinternacoes" for maior que zero. Não chame internações de "desnecessárias" nem as atribua a doenças crônicas: o payload não traz diagnóstico nem evidência disso — descreva o custo e o número de internações.
 
 FREQUÊNCIA NÃO É IMPACTO FINANCEIRO
 - Nunca conclua que um fator é o principal impacto financeiro apenas pela quantidade de ocorrências.
