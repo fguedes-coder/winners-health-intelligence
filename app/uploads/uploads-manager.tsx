@@ -65,6 +65,55 @@ type ClienteOption = { id: string; nome: string }
 const inputClass =
   'h-10 w-full rounded-lg border border-border bg-background px-3 text-sm text-foreground outline-none transition-colors focus:border-ring placeholder:text-muted-foreground'
 
+const brl = (v: number | string | null | undefined) =>
+  v == null
+    ? '—'
+    : Number(v).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
+
+/** Linha da fatura do mês lida pelo robô no Portal do Corretor. */
+function FaturaDaColeta({ coleta }: { coleta: ColetaSulAmerica | null }) {
+  if (!coleta?.fatura_status) return null
+  const mes = mesReferencia(coleta.competencia)
+  const base = 'flex w-full items-center gap-1.5 text-xs'
+  switch (coleta.fatura_status) {
+    case 'gravada':
+      return (
+        <span className={`${base} text-emerald-700`}>
+          <CheckCircle2 className="size-3.5 shrink-0" />
+          Fatura de {mes} lançada automaticamente: <strong>{brl(coleta.fatura_valor)}</strong>
+          <span className="text-muted-foreground">(Portal do Corretor)</span>
+        </span>
+      )
+    case 'conferida':
+      return (
+        <span className={`${base} text-muted-foreground`}>
+          <CheckCircle2 className="size-3.5 shrink-0 text-emerald-500" />
+          Fatura de {mes} conferida com o Portal do Corretor: {brl(coleta.fatura_valor)}
+        </span>
+      )
+    case 'divergente':
+      return (
+        <span className={`${base} text-amber-700`}>
+          <AlertTriangle className="size-3.5 shrink-0" />
+          Fatura de {mes}: o portal diz <strong>{brl(coleta.fatura_valor)}</strong> e o sistema tem{' '}
+          <strong>{brl(coleta.fatura_valor_sistema)}</strong>. Nada foi alterado —{' '}
+          <a href="/sinistralidade" className="underline underline-offset-2">
+            confira em Sinistralidade
+          </a>
+          .
+        </span>
+      )
+    default:
+      return (
+        <span className={`${base} text-muted-foreground`}>
+          <AlertTriangle className="size-3.5 shrink-0 text-amber-500" />
+          Fatura de {mes} não lida no portal
+          {coleta.fatura_mensagem ? `: ${coleta.fatura_mensagem}` : '.'}
+        </span>
+      )
+  }
+}
+
 function formatBytes(bytes: number) {
   if (!bytes) return '—'
   const units = ['B', 'KB', 'MB', 'GB']
@@ -697,6 +746,9 @@ export function UploadsManager({
                   )}
                   {coletaMsg && (
                     <span className="w-full text-xs text-destructive">{coletaMsg}</span>
+                  )}
+                  {!buscando && !aguardandoLiberacao && (
+                    <FaturaDaColeta coleta={coletaPronta ?? ultimaColeta} />
                   )}
                 </div>
               )}

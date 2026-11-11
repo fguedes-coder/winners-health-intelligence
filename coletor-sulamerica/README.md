@@ -16,9 +16,24 @@ confirmar a importação continua sendo do usuário.
 4. Mês fora da lista → **Nova Solicitação** (apólice, início = fim = mês) →
    status `aguardando` → nova conferência em ~70 min (a SulAmérica libera em até 1 h).
 
+5. Com o TXT pronto, **valor da fatura do mês** no Portal do Corretor
+   (`portal-corretor.mjs`): login → busca rápida pelo contrato da matriz
+   (`82CC9`) → cartão **Pagamentos** → parcela com vencimento no mês da
+   competência → coluna **Valor** (fatura cheia da apólice; "Valor pago" é só a
+   matriz). Em `faturas`: mês vazio → grava; mesmo valor → confere; valor
+   diferente → **não sobrescreve** e registra a divergência (`fatura.mjs`). O
+   resultado aparece em Uploads. Falhar aqui não desfaz o TXT.
+   O botão OK do login tem reCAPTCHA invisível: se o portal abrir desafio de
+   imagens, o robô avisa e o valor é lançado à mão — não há tentativa de
+   contornar.
+
+Teste só de leitura (não grava nada):
+`docker exec <container> node src/testar-fatura.mjs 2026-10`
+
 ## Credenciais
 
-Login e senha do portal e do e-mail que recebe o token são digitados em
+Login e senha do portal, do e-mail que recebe o token e (opcional) do Portal
+do Corretor são digitados em
 **Configurações → Robôs** e ficam criptografados no Supabase Vault
 (`salvar_credencial_sulamerica`). O coletor os lê a cada busca pela função
 `credenciais_sulamerica_coletor`, que só a service role executa.
@@ -31,6 +46,7 @@ Login e senha do portal e do e-mail que recebe o token são digitados em
 | `SUPABASE_SERVICE_ROLE_KEY` | service role do Supabase do Health |
 | `IMAP_HOST` | opcional — padrão `mail.winnersseguros.net.br` (nome do certificado TLS) |
 | `SULAMERICA_APOLICE` | opcional — padrão `81938` |
+| `CORRETOR_CONTRATO` | opcional — padrão `82CC9` (matriz da apólice) |
 
 ## Banco
 

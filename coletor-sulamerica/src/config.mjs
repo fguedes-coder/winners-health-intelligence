@@ -22,6 +22,14 @@ export const config = {
     // Única apólice da carteira hoje; aparece sozinha na Nova Solicitação.
     apolice: process.env.SULAMERICA_APOLICE?.trim() || '81938',
   },
+  portalCorretor: {
+    urlLogin:
+      process.env.CORRETOR_URL_LOGIN ??
+      'https://corretor.sulamericaseguros.com.br/?logout=true',
+    // Contrato da matriz da apólice 81938. A "Busca rápida" por ele traz a
+    // fatura cheia da apólice (todas as subestipulantes) em Pagamentos.
+    contrato: process.env.CORRETOR_CONTRATO?.trim() || '82CC9',
+  },
   imap: {
     // O certificado TLS do servidor de e-mail é emitido para este nome — e não
     // para mail.winnerscorretora.com.br. Conectar por ele mantém a verificação

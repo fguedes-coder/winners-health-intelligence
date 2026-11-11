@@ -64,6 +64,17 @@ export type ColetaSulAmerica = {
   proxima_tentativa_em: string | null
   solicitado_em: string
   concluido_em: string | null
+  /**
+   * Valor da fatura do mês lido no Portal do Corretor. gravada — o mês estava
+   * vazio e o coletor lançou; conferida — já havia o mesmo valor; divergente —
+   * havia outro valor e NADA foi alterado (fatura_valor_sistema guarda qual).
+   * Ausente em coletas anteriores a 11/2026.
+   */
+  fatura_status?: 'gravada' | 'conferida' | 'divergente' | 'sem_acesso' | 'erro' | null
+  fatura_valor?: number | string | null
+  fatura_valor_sistema?: number | string | null
+  fatura_vencimento?: string | null
+  fatura_mensagem?: string | null
 }
 
 export type ResumoImportacao = {

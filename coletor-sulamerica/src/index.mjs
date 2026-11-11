@@ -13,6 +13,8 @@ import { createClient } from '@supabase/supabase-js'
 import { config } from './config.mjs'
 import { ArquivoIndisponivel, ArquivoSolicitado, baixarContasPagas } from './portal.mjs'
 import { carregarCredenciais } from './credenciais.mjs'
+import { buscarValorFatura } from './portal-corretor.mjs'
+import { associarFatura } from './fatura.mjs'
 
 const db = createClient(config.supabase.url, config.supabase.chave, {
   auth: { persistSession: false, autoRefreshToken: false },
@@ -124,6 +126,10 @@ async function processar(coleta) {
       proxima_tentativa_em: null,
     }).eq('id', coleta.id)
     log(`  pronto: ${nome} (${conteudo.length} bytes)`)
+
+    // Valor da fatura do mês, no Portal do Corretor. Falhar aqui NÃO desfaz
+    // o TXT: o arquivo continua pronto e a fatura é lançada à mão.
+    await coletarFatura(coleta, credenciais)
   } catch (e) {
     const espera = config.esperaAposSolicitacaoMin * 60_000
     if (e instanceof ArquivoSolicitado) {
@@ -154,6 +160,48 @@ async function processar(coleta) {
       proxima_tentativa_em: null,
     }).eq('id', coleta.id)
     log(`  erro: ${mensagem}`)
+  }
+}
+
+/**
+ * Lê o valor da fatura da competência no Portal do Corretor e o associa no
+ * Health (ver fatura.mjs: grava se o mês está vazio, nunca sobrescreve).
+ */
+async function coletarFatura(coleta, credenciais) {
+  const { competencia } = coleta
+  const registrar = (campos) =>
+    db.from('coletas_sulamerica').update(campos).eq('id', coleta.id).then(({ error }) => {
+      if (error) log(`  não consegui registrar a fatura: ${error.message}`)
+    })
+
+  if (!credenciais.corretor) {
+    await registrar({
+      fatura_status: 'sem_acesso',
+      fatura_mensagem: 'Acesso ao Portal do Corretor não cadastrado em Configurações → Robôs.',
+    })
+    log('  fatura: sem acesso ao Portal do Corretor cadastrado')
+    return
+  }
+
+  try {
+    const { valor, vencimento } = await buscarValorFatura({
+      competencia,
+      log: (m) => log(`  ${m}`),
+      credenciais: credenciais.corretor,
+    })
+    const { status, valorSistema } = await associarFatura(db, { competencia, valor })
+    await registrar({
+      fatura_status: status,
+      fatura_valor: valor,
+      fatura_valor_sistema: valorSistema,
+      fatura_vencimento: vencimento,
+      fatura_mensagem: null,
+    })
+    log(`  fatura ${status}: R$ ${valor.toFixed(2)}${valorSistema != null ? ` (sistema: R$ ${valorSistema.toFixed(2)})` : ''}`)
+  } catch (e) {
+    const mensagem = String(e?.message ?? e).replace(/\s+/g, ' ').slice(0, 300)
+    await registrar({ fatura_status: 'erro', fatura_mensagem: mensagem })
+    log(`  fatura: erro: ${mensagem}`)
   }
 }
 

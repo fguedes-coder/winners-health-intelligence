@@ -8,6 +8,14 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { salvarAcessoSulAmerica, type StatusRoboSulAmerica } from './robos-actions'
 
+/** Necessárias para baixar o TXT; as do Portal do Corretor são opcionais. */
+const CREDENCIAIS_TXT = [
+  'sulamerica_login',
+  'sulamerica_senha',
+  'sulamerica_imap_usuario',
+  'sulamerica_imap_senha',
+] as const
+
 const inputClass =
   'h-10 w-full rounded-lg border border-border bg-background px-3 text-sm text-foreground outline-none transition-colors focus:border-ring placeholder:text-muted-foreground'
 
@@ -40,7 +48,8 @@ export function RobosPanel({ status }: { status: StatusRoboSulAmerica }) {
   const [msg, setMsg] = useState<{ tipo: 'ok' | 'erro'; texto: string } | null>(null)
 
   const c = status.credenciais
-  const completo = Object.values(c).every((x) => x.cadastrada)
+  const completo = CREDENCIAIS_TXT.every((k) => c[k].cadastrada)
+  const corretorCompleto = c.corretor_login.cadastrada && c.corretor_senha.cadastrada
 
   function salvar(formData: FormData) {
     setMsg(null)
@@ -82,7 +91,9 @@ export function RobosPanel({ status }: { status: StatusRoboSulAmerica }) {
             <Link href="/uploads" className="underline underline-offset-2">Upload</Link>.
             Roda sozinho todo dia 3 (repete nos dias 4 e 5 se o arquivo ainda não tiver
             saído) ou quando você clica em <strong>Buscar agora</strong>. A importação
-            continua sendo sua.
+            continua sendo sua. Com o acesso ao Portal do Corretor, também lê o valor da
+            fatura do mês e o lança em Sinistralidade se o mês estiver vazio — um valor
+            já lançado nunca é sobrescrito.
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-5">
@@ -152,6 +163,40 @@ export function RobosPanel({ status }: { status: StatusRoboSulAmerica }) {
                     type="password"
                     autoComplete="new-password"
                     placeholder={senhaPlaceholder(c.sulamerica_imap_senha)}
+                    className={inputClass}
+                  />
+                </label>
+              </fieldset>
+
+              <fieldset className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <legend className="mb-2 flex items-center gap-2 text-sm font-medium text-foreground">
+                  <KeyRound className="size-4 text-primary" /> Portal do Corretor — valor da fatura
+                  <span
+                    className={`rounded-full px-2 py-0.5 text-xs font-medium ${
+                      corretorCompleto ? 'bg-emerald-500/10 text-emerald-600' : 'bg-muted text-muted-foreground'
+                    }`}
+                  >
+                    {corretorCompleto ? 'configurado' : 'opcional'}
+                  </span>
+                </legend>
+                <label className="flex flex-col gap-1.5 text-sm">
+                  <span className="font-medium text-foreground">Login</span>
+                  <input
+                    name="login_corretor"
+                    type="text"
+                    autoComplete="off"
+                    defaultValue={c.corretor_login.valor ?? ''}
+                    placeholder="login do corretor.sulamericaseguros.com.br"
+                    className={inputClass}
+                  />
+                </label>
+                <label className="flex flex-col gap-1.5 text-sm">
+                  <span className="font-medium text-foreground">Senha</span>
+                  <input
+                    name="senha_corretor"
+                    type="password"
+                    autoComplete="new-password"
+                    placeholder={senhaPlaceholder(c.corretor_senha)}
                     className={inputClass}
                   />
                 </label>
