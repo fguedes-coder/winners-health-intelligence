@@ -21,6 +21,17 @@ create table if not exists public.coletas_sulamerica (
   concluido_em timestamptz
 );
 
+-- Valor da fatura do mês lido no Portal do Corretor (11/2026). O coletor
+-- grava em faturas só quando o mês está vazio; divergência fica registrada
+-- aqui para o usuário decidir.
+alter table public.coletas_sulamerica
+  add column if not exists fatura_status text
+    check (fatura_status in ('gravada', 'conferida', 'divergente', 'sem_acesso', 'erro')),
+  add column if not exists fatura_valor numeric(14,2),
+  add column if not exists fatura_valor_sistema numeric(14,2),
+  add column if not exists fatura_vencimento date,
+  add column if not exists fatura_mensagem text;
+
 -- No máximo uma busca em andamento por vez (botão e agenda não se atropelam).
 create unique index if not exists coletas_sulamerica_uma_em_andamento
   on public.coletas_sulamerica ((true))
@@ -60,7 +71,8 @@ as $$
 declare
   v_id uuid;
 begin
-  if p_nome not in ('sulamerica_login', 'sulamerica_senha', 'sulamerica_imap_usuario', 'sulamerica_imap_senha') then
+  if p_nome not in ('sulamerica_login', 'sulamerica_senha', 'sulamerica_imap_usuario', 'sulamerica_imap_senha',
+                    'corretor_login', 'corretor_senha') then
     raise exception 'credencial desconhecida: %', p_nome;
   end if;
   if coalesce(btrim(p_valor), '') = '' then
@@ -87,10 +99,11 @@ set search_path = ''
 as $$
   select s.name,
          s.updated_at,
-         case when s.name in ('sulamerica_login', 'sulamerica_imap_usuario') then d.decrypted_secret end
+         case when s.name in ('sulamerica_login', 'sulamerica_imap_usuario', 'corretor_login') then d.decrypted_secret end
   from vault.secrets s
   join vault.decrypted_secrets d on d.id = s.id
-  where s.name in ('sulamerica_login', 'sulamerica_senha', 'sulamerica_imap_usuario', 'sulamerica_imap_senha');
+  where s.name in ('sulamerica_login', 'sulamerica_senha', 'sulamerica_imap_usuario', 'sulamerica_imap_senha',
+                   'corretor_login', 'corretor_senha');
 $$;
 revoke all on function public.status_credenciais_sulamerica() from public, anon;
 grant execute on function public.status_credenciais_sulamerica() to authenticated;
@@ -104,7 +117,8 @@ set search_path = ''
 as $$
   select name, decrypted_secret
   from vault.decrypted_secrets
-  where name in ('sulamerica_login', 'sulamerica_senha', 'sulamerica_imap_usuario', 'sulamerica_imap_senha');
+  where name in ('sulamerica_login', 'sulamerica_senha', 'sulamerica_imap_usuario', 'sulamerica_imap_senha',
+                 'corretor_login', 'corretor_senha');
 $$;
 revoke all on function public.credenciais_sulamerica_coletor() from public, anon, authenticated;
 grant execute on function public.credenciais_sulamerica_coletor() to service_role;

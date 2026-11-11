@@ -13,6 +13,9 @@ const CAMPOS = {
   sulamerica_senha: 'senha',
   sulamerica_imap_usuario: 'email',
   sulamerica_imap_senha: 'senha_email',
+  // Portal do Corretor — só para ler o valor da fatura do mês. Opcional.
+  corretor_login: 'login_corretor',
+  corretor_senha: 'senha_corretor',
 } as const
 
 type NomeCredencial = keyof typeof CAMPOS
