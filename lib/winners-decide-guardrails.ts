@@ -119,8 +119,14 @@ const RE_RENOVACAO = /\b(?:renova[çc][ãa]o|renovar|reajustes?)\b/i
 // "Desnecessária" só é barrada quando qualifica INTERNAÇÕES (não há
 // diagnóstico no payload); "reduzir visitas desnecessárias ao PS" é
 // recomendação legítima e continua passando.
+//
+// Também barrados (out/26, geração final): "dependência do pronto-socorro"
+// para 30 idas no mês, e internações de "longa duração" — o payload não traz
+// tempo de permanência (as de out/26 tinham contas de 1 a 4 dias).
+// "Dependência" só conta quando é DE serviço (PS, rede, plano): "dependência
+// química" não é juízo sobre utilização.
 const RE_ADJETIVO_SEM_BASE =
-  /\b(?:excessiv[oa]s?|inadequad[oa]s?|abusiv[oa]s?)\b|interna[çc](?:ão|ões)\s+(?:\S+\s+){0,2}?desnecess[áa]ri[oa]s?/i
+  /\b(?:excessiv[oa]s?|inadequad[oa]s?|abusiv[oa]s?)\b|interna[çc](?:ão|ões)\s+(?:\S+\s+){0,2}?desnecess[áa]ri[oa]s?|depend[êe]ncia\s+(?:d[oa]s?|de)\s+(?:\S+\s+){0,2}?(?:pronto|ps\b|urg[êe]ncia|emerg[êe]ncia|servi[çc]os?|rede|plano)|(?:longa|prolongad[ao])\s+(?:dura[çc][ãa]o|perman[êe]ncia|interna[çc])|(?:interna[çc](?:ão|ões)|perman[êe]ncias?|estadias?)\s+(?:\S+\s+){0,2}?(?:prolongad[ao]s?|longas?)\b/i
 
 const RE_TOP_PCT_VIDAS = /\btop\s+\d+(?:[.,]\d+)?\s*%\s+(?:das|dos)\s+(?:vidas|benefici[áa]rios)/i
 
