@@ -3,10 +3,10 @@
 import { useRef, useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { Bot, CheckCircle2, CircleDashed, KeyRound, Loader2, Lock, TriangleAlert } from 'lucide-react'
+import { BedDouble, Bot, CheckCircle2, CircleDashed, KeyRound, Loader2, Lock, RefreshCw, TriangleAlert } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { salvarAcessoSulAmerica, type StatusRoboSulAmerica } from './robos-actions'
+import { atualizarGestaoConectada, salvarAcessoSulAmerica, type StatusRoboSulAmerica } from './robos-actions'
 
 /** Necessárias para baixar o TXT; as do Portal do Corretor são opcionais. */
 const CREDENCIAIS_TXT = [
@@ -231,9 +231,155 @@ export function RobosPanel({ status }: { status: StatusRoboSulAmerica }) {
         </CardContent>
       </Card>
 
+      <GestaoConectadaCard status={status} />
+
       <p className="text-xs text-muted-foreground">
-        Novos robôs — como o de faturas e vidas ativas — aparecerão aqui, cada um com seu acesso.
+        Novos robôs — como o de vidas ativas — aparecerão aqui, cada um com seu acesso.
       </p>
     </div>
+  )
+}
+
+const ROTULO_STATUS_GC: Record<string, string> = {
+  pendente: 'na fila',
+  executando: 'atualizando agora',
+  ok: 'atualizado',
+  erro: 'falhou',
+}
+
+function GestaoConectadaCard({ status }: { status: StatusRoboSulAmerica }) {
+  const router = useRouter()
+  const formRef = useRef<HTMLFormElement>(null)
+  const [salvando, startSalvar] = useTransition()
+  const [atualizando, startAtualizar] = useTransition()
+  const [msg, setMsg] = useState<{ tipo: 'ok' | 'erro'; texto: string } | null>(null)
+
+  const c = status.credenciais
+  const completo = c.gc_login.cadastrada && c.gc_senha.cadastrada
+  const ultima = status.gestaoConectada
+  const emAndamento = ultima?.status === 'pendente' || ultima?.status === 'executando'
+
+  function salvar(formData: FormData) {
+    setMsg(null)
+    startSalvar(async () => {
+      const r = await salvarAcessoSulAmerica(formData)
+      if (r.ok) {
+        setMsg({ tipo: 'ok', texto: 'Acesso salvo. O robô usa os novos dados já na próxima atualização.' })
+        formRef.current?.reset()
+        router.refresh()
+      } else {
+        setMsg({ tipo: 'erro', texto: r.error ?? 'Falha ao salvar.' })
+      }
+    })
+  }
+
+  function atualizar() {
+    setMsg(null)
+    startAtualizar(async () => {
+      const r = await atualizarGestaoConectada()
+      if (r.ok) {
+        setMsg({ tipo: 'ok', texto: 'Atualização pedida. Leva alguns minutos; acompanhe em Internações.' })
+        router.refresh()
+      } else {
+        setMsg({ tipo: 'erro', texto: r.error ?? 'Falha ao pedir a atualização.' })
+      }
+    })
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <BedDouble className="size-4 text-primary" />
+          Robô do Gestão Conectada
+          {completo ? (
+            <span className="ml-auto inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-2 py-0.5 text-xs font-medium text-emerald-600">
+              <CheckCircle2 className="size-3.5" /> configurado
+            </span>
+          ) : (
+            <span className="ml-auto inline-flex items-center gap-1 rounded-full bg-amber-500/10 px-2 py-0.5 text-xs font-medium text-amber-600">
+              <CircleDashed className="size-3.5" /> falta configurar
+            </span>
+          )}
+        </CardTitle>
+        <CardDescription>
+          Entra no SulAmérica Gestão Conectada, lê os relatórios de internação (confirmadas,
+          em análise, sem alta, urgência, juntas médicas e negativas) e a ficha de cada
+          internação — datas, alta, diárias, hospital, procedimentos e hipótese diagnóstica.
+          Atualiza sozinho a cada 6 horas, das 6h às 22h. O portal só mostra os últimos 60
+          dias; o histórico fica guardado no Health, em{' '}
+          <Link href="/internacoes" className="underline underline-offset-2">Internações</Link>.
+          O robô só lê: não altera nada no portal.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-5">
+        {ultima && (
+          <p className="text-sm text-muted-foreground">
+            Última atualização: {ROTULO_STATUS_GC[ultima.status] ?? ultima.status} ({data(ultima.quando)})
+            {ultima.status === 'ok' && ultima.manifestacoes != null
+              ? ` — ${ultima.manifestacoes} solicitação(ões) lida(s), ${ultima.internacoesAbertas ?? 0} internação(ões) sem alta`
+              : ''}
+            {ultima.status === 'erro' && ultima.mensagem ? `: ${ultima.mensagem}` : ''}
+          </p>
+        )}
+
+        {status.disponivel && (
+          <form ref={formRef} action={salvar} className="flex flex-col gap-5">
+            <fieldset className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <legend className="mb-2 flex items-center gap-2 text-sm font-medium text-foreground">
+                <KeyRound className="size-4 text-primary" /> Acesso ao Gestão Conectada
+              </legend>
+              <label className="flex flex-col gap-1.5 text-sm">
+                <span className="font-medium text-foreground">E-mail</span>
+                <input
+                  name="login_gc"
+                  type="email"
+                  autoComplete="off"
+                  defaultValue={c.gc_login.valor ?? ''}
+                  placeholder="e-mail de acesso ao sulamerica.my.site.com"
+                  className={inputClass}
+                />
+              </label>
+              <label className="flex flex-col gap-1.5 text-sm">
+                <span className="font-medium text-foreground">Senha</span>
+                <input
+                  name="senha_gc"
+                  type="password"
+                  autoComplete="new-password"
+                  placeholder={
+                    c.gc_senha.cadastrada
+                      ? `cadastrada em ${data(c.gc_senha.atualizadoEm)} — deixe em branco para manter`
+                      : 'digite a senha'
+                  }
+                  className={inputClass}
+                />
+              </label>
+            </fieldset>
+
+            {msg && (
+              <p
+                role="status"
+                className={`rounded-lg px-3 py-2 text-sm ${
+                  msg.tipo === 'ok' ? 'bg-emerald-500/10 text-emerald-700' : 'bg-destructive/10 text-destructive'
+                }`}
+              >
+                {msg.texto}
+              </p>
+            )}
+
+            <div className="flex flex-wrap justify-end gap-2">
+              <Button type="button" variant="outline" onClick={atualizar} disabled={!completo || atualizando || emAndamento}>
+                {atualizando || emAndamento ? <Loader2 className="size-4 animate-spin" /> : <RefreshCw className="size-4" />}
+                {emAndamento ? 'Atualizando…' : 'Atualizar agora'}
+              </Button>
+              <Button type="submit" disabled={salvando}>
+                {salvando ? <Loader2 className="size-4 animate-spin" /> : <KeyRound className="size-4" />}
+                Salvar acesso
+              </Button>
+            </div>
+          </form>
+        )}
+      </CardContent>
+    </Card>
   )
 }

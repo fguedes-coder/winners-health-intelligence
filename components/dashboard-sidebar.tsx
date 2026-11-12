@@ -5,6 +5,7 @@ import { usePathname } from 'next/navigation'
 import {
   Activity,
   BarChart3,
+  BedDouble,
   Brain,
   Contact,
   FileText,
@@ -38,6 +39,7 @@ const navItems: {
     icon: HeartPulse,
     badge: 'Novo',
   },
+  { label: 'Internações', href: '/internacoes', icon: BedDouble, badge: 'Novo' },
   { label: 'Radar de Risco', href: '/radar-risco', icon: Radar },
   {
     label: 'People Analytics',

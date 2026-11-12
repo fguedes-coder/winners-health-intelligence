@@ -12,9 +12,11 @@
 import { createClient } from '@supabase/supabase-js'
 import { config } from './config.mjs'
 import { ArquivoIndisponivel, ArquivoSolicitado, baixarContasPagas } from './portal.mjs'
-import { carregarCredenciais } from './credenciais.mjs'
+import { carregarCredenciais, carregarCredenciaisGC } from './credenciais.mjs'
 import { buscarValorFatura } from './portal-corretor.mjs'
 import { associarFatura } from './fatura.mjs'
+import { coletarGestaoConectada } from './gestao-conectada.mjs'
+import { gravarManifestacoes, manifestacoesARevisitar } from './manifestacoes-gc.mjs'
 
 const db = createClient(config.supabase.url, config.supabase.chave, {
   auth: { persistSession: false, autoRefreshToken: false },
@@ -215,6 +217,93 @@ async function liberarTravadas() {
   }).eq('status', 'executando').lt('iniciado_em', limite)
 }
 
+// ---------------------------------------------------------------------------
+// Gestão Conectada — internações e autorizações (fila coletas_gestao_conectada)
+// ---------------------------------------------------------------------------
+
+/** A cada `intervaloHoras`, de horaInicio a horaFim, se houver acesso cadastrado. */
+async function agendarGC() {
+  const { hora } = agoraSP()
+  const gc = config.gestaoConectada
+  if (hora < gc.horaInicio || hora >= gc.horaFim) return
+
+  const { data: ultimas } = await db
+    .from('coletas_gestao_conectada')
+    .select('status, solicitado_em, concluido_em')
+    .order('solicitado_em', { ascending: false })
+    .limit(1)
+  const u = ultimas?.[0]
+  if (u) {
+    if (['pendente', 'executando'].includes(u.status)) return
+    const desde = Date.now() - new Date(u.concluido_em ?? u.solicitado_em).getTime()
+    const espera = u.status === 'erro' ? 3 * 3600_000 : gc.intervaloHoras * 3600_000
+    if (desde < espera) return
+  }
+  if (!(await carregarCredenciaisGC(db))) return
+
+  const { error } = await db.from('coletas_gestao_conectada').insert({ origem: 'agendado', status: 'pendente' })
+  if (!error) log('atualização do Gestão Conectada agendada')
+}
+
+async function processarGC() {
+  const agora = new Date().toISOString()
+  const { data: pend } = await db
+    .from('coletas_gestao_conectada')
+    .select('id')
+    .eq('status', 'pendente')
+    .order('solicitado_em', { ascending: true })
+    .limit(1)
+  const p = pend?.[0]
+  if (!p) return
+  const { data: coleta } = await db
+    .from('coletas_gestao_conectada')
+    .update({ status: 'executando', iniciado_em: agora })
+    .eq('id', p.id)
+    .eq('status', 'pendente')
+    .select('id')
+    .maybeSingle()
+  if (!coleta) return
+
+  log(`Gestão Conectada · coleta ${coleta.id}`)
+  try {
+    const credenciais = await carregarCredenciaisGC(db)
+    if (!credenciais) throw new Error('Acesso ao Gestão Conectada não cadastrado em Configurações → Robôs.')
+    const revisitar = await manifestacoesARevisitar(db)
+    const { manifestacoes, relatorios } = await coletarGestaoConectada({
+      credenciais,
+      log: (m) => log(`  ${m}`),
+      revisitar,
+    })
+    const { gravadas, internacoesAbertas } = await gravarManifestacoes(db, manifestacoes)
+    await db.from('coletas_gestao_conectada').update({
+      status: 'ok',
+      mensagem: null,
+      relatorios_lidos: relatorios,
+      manifestacoes: gravadas,
+      internacoes_abertas: internacoesAbertas,
+      concluido_em: new Date().toISOString(),
+    }).eq('id', coleta.id)
+    log(`  Gestão Conectada ok: ${gravadas} manifestação(ões), ${internacoesAbertas} internação(ões) sem alta`)
+  } catch (e) {
+    const mensagem = String(e?.message ?? e).replace(/\s+/g, ' ').slice(0, 300)
+    await db.from('coletas_gestao_conectada').update({
+      status: 'erro',
+      mensagem,
+      concluido_em: new Date().toISOString(),
+    }).eq('id', coleta.id)
+    log(`  Gestão Conectada erro: ${mensagem}`)
+  }
+}
+
+async function liberarTravadasGC() {
+  const limite = new Date(Date.now() - 30 * 60_000).toISOString()
+  await db.from('coletas_gestao_conectada').update({
+    status: 'erro',
+    mensagem: 'Atualização interrompida (o coletor reiniciou). Tente novamente.',
+    concluido_em: new Date().toISOString(),
+  }).eq('status', 'executando').lt('iniciado_em', limite)
+}
+
 async function ciclo() {
   if (ocupado) return
   ocupado = true
@@ -225,6 +314,14 @@ async function ciclo() {
     if (coleta) await processar(coleta)
   } catch (e) {
     log(`falha no ciclo: ${String(e?.message ?? e).slice(0, 300)}`)
+  }
+  // Gestão Conectada é independente: uma falha num não trava o outro.
+  try {
+    await liberarTravadasGC()
+    await agendarGC()
+    await processarGC()
+  } catch (e) {
+    log(`falha no ciclo do Gestão Conectada: ${String(e?.message ?? e).slice(0, 300)}`)
   } finally {
     ocupado = false
   }

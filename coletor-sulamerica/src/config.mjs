@@ -30,6 +30,25 @@ export const config = {
     // fatura cheia da apólice (todas as subestipulantes) em Pagamentos.
     contrato: process.env.CORRETOR_CONTRATO?.trim() || '82CC9',
   },
+  gestaoConectada: {
+    url: process.env.GC_URL?.trim() || 'https://sulamerica.my.site.com/gestaoconectada',
+    // Atualiza a cada N horas, entre horaInicio e horaFim (São Paulo).
+    intervaloHoras: Number(process.env.GC_INTERVALO_HORAS ?? 6),
+    horaInicio: 6,
+    horaFim: 22,
+    // Relatórios prontos da "Gestão Conectada - Pasta Médico" lidos a cada
+    // atualização (IDs do Salesforce, mapeados em 12/11/2026).
+    relatorios: [
+      { id: '00O3r000007Xb3dEAC', nome: 'Internações recentes confirmadas (60d)' },
+      { id: '00O0Z000006a8WGUAY', nome: 'Solicitações de Internação (60d)' },
+      { id: '00OU5000000C6mPMAS', nome: 'Internações por tempo de internação' },
+      { id: '00O3r000007QZwmEAG', nome: 'Internações em análise pela SulAmérica' },
+      { id: '00OU5000005K52HMAS', nome: 'Internações e Prorrogações (7d)' },
+      { id: '00O0Z000006iKS7UAM', nome: 'Internações de urgência/emergência' },
+      { id: '00O3r000007QZxLEAW', nome: 'Juntas médicas em andamento' },
+      { id: '00O3r000007HbUSEA0', nome: 'Solicitações negadas' },
+    ],
+  },
   imap: {
     // O certificado TLS do servidor de e-mail é emitido para este nome — e não
     // para mail.winnerscorretora.com.br. Conectar por ele mantém a verificação
