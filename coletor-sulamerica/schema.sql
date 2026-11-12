@@ -172,6 +172,11 @@ create table if not exists public.gc_manifestacoes (
   atualizado_em timestamptz not null default now()
 );
 
+-- Fase 2: relatórios do portal em que a manifestação apareceu (acumulado) —
+-- é por eles que se sabe que uma internação é psiquiátrica, por exemplo.
+alter table public.gc_manifestacoes
+  add column if not exists relatorios text[] not null default '{}';
+
 create index if not exists gc_manifestacoes_carteirinha on public.gc_manifestacoes (carteirinha);
 create index if not exists gc_manifestacoes_internacao on public.gc_manifestacoes (data_internacao desc);
 create index if not exists gc_manifestacoes_abertura on public.gc_manifestacoes (abertura_em desc);

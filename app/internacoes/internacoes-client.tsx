@@ -5,19 +5,22 @@ import Link from 'next/link'
 import {
   AlertTriangle,
   BedDouble,
+  Brain,
   CalendarDays,
   ChevronDown,
   ChevronRight,
   Clock,
   Hourglass,
   RefreshCw,
+  Repeat,
+  Wallet,
 } from 'lucide-react'
 import { StatCard } from '@/components/stat-card'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { beneficiarioLabel, type BenefDisplay } from '@/lib/display-prefs'
-import type { InternacaoGC, SituacaoInternacao, StatusColetaGC } from '@/lib/gestao-conectada'
+import type { InternacaoGC, SituacaoInternacao, SolicitacaoSaudeMentalGC, StatusColetaGC } from '@/lib/gestao-conectada'
 import { cn } from '@/lib/utils'
 
 const SITUACAO: Record<SituacaoInternacao, { rotulo: string; variant: 'default' | 'neutral' | 'success' | 'warning' | 'destructive' }> = {
@@ -51,6 +54,7 @@ const dataHora = (iso: string | null) =>
 const mesRotulo = (ym: string) => `${MESES[Number(ym.slice(5, 7)) - 1]}/${ym.slice(2, 4)}`
 const menosDias = (hoje: string, n: number) =>
   new Date(Date.parse(`${hoje}T00:00:00Z`) - n * 86_400_000).toISOString().slice(0, 10)
+const brl = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 })
 const urgente = (i: InternacaoGC) => /urg|emerg/i.test(i.carater ?? '')
 const cirurgica = (i: InternacaoGC) => /cir[uú]rg/i.test(i.tipoInternacao ?? '')
 const acimaDasDiarias = (i: InternacaoGC) =>
@@ -58,11 +62,13 @@ const acimaDasDiarias = (i: InternacaoGC) =>
 
 export function InternacoesClient({
   internacoes,
+  saudeMentalOutras,
   ultimaColeta,
   hoje,
   benefDisplay,
 }: {
   internacoes: InternacaoGC[]
+  saudeMentalOutras: SolicitacaoSaudeMentalGC[]
   ultimaColeta: StatusColetaGC
   hoje: string
   benefDisplay: BenefDisplay
@@ -105,9 +111,15 @@ export function InternacoesClient({
         }
       })
 
+    const comCusto = confirmadas.filter((i) => i.custoPago != null)
     return {
       internados,
       andamento,
+      reinternacoes: confirmadas.filter((i) => i.reinternacao),
+      custoTotal: comCusto.reduce((s, i) => s + (i.custoPago ?? 0), 0),
+      comCusto: comCusto.length,
+      confirmadas: confirmadas.length,
+      saudeMental: internacoes.filter((i) => i.saudeMental),
       noMes: confirmadas.filter((i) => (i.dataInternacao ?? '').startsWith(mesAtual)).length,
       ult60,
       permanencia,
@@ -173,6 +185,27 @@ export function InternacoesClient({
         />
       </div>
 
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+        <StatCard
+          label="Reinternações (até 30 dias da alta)"
+          value={String(r.reinternacoes.length)}
+          icon={Repeat}
+          hint="mesma pessoa, datas reais do portal"
+        />
+        <StatCard
+          label="Custo pago das internações"
+          value={brl(r.custoTotal)}
+          icon={Wallet}
+          hint={`${r.comCusto} de ${r.confirmadas} já com conta paga no TXT`}
+        />
+        <StatCard
+          label="Saúde mental"
+          value={String(r.saudeMental.length + saudeMentalOutras.length)}
+          icon={Brain}
+          hint={`${r.saudeMental.length} internação(ões) · ${saudeMentalOutras.length} outra(s) solicitação(ões)`}
+        />
+      </div>
+
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
@@ -201,6 +234,55 @@ export function InternacoesClient({
           </CardHeader>
           <CardContent className="px-0">
             <TabelaInternacoes lista={r.andamento} nome={nome} aberta={aberta} setAberta={setAberta} hoje={hoje} />
+          </CardContent>
+        </Card>
+      )}
+
+      {(r.saudeMental.length > 0 || saudeMentalOutras.length > 0) && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Brain className="size-4 text-primary" /> Saúde mental
+            </CardTitle>
+            <CardDescription>
+              Internações psiquiátricas e solicitações de tratamento (ex.: TEA) que passam por autorização. Terapia e
+              consulta com psicólogo normalmente não passam pelo portal — aparecem em Utilização, pelo TXT.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-4 px-0">
+            {r.saudeMental.length > 0 && (
+              <TabelaInternacoes lista={r.saudeMental} nome={nome} aberta={aberta} setAberta={setAberta} hoje={hoje} />
+            )}
+            {saudeMentalOutras.length > 0 && (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Beneficiário</TableHead>
+                    <TableHead>Tipo</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead>Prestador</TableHead>
+                    <TableHead>Aberta em</TableHead>
+                    <TableHead>Procedimentos</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {saudeMentalOutras.map((o) => (
+                    <TableRow key={o.numero}>
+                      <TableCell className="font-medium">
+                        {beneficiarioLabel(o.carteirinha ?? `manifestação ${o.numero}`, o.beneficiarioNome, benefDisplay)}
+                      </TableCell>
+                      <TableCell>{o.tipoRegistro ?? '—'}</TableCell>
+                      <TableCell>{o.statusPortal ?? '—'}</TableCell>
+                      <TableCell className="max-w-56 truncate">{o.prestador ?? '—'}</TableCell>
+                      <TableCell>{dataHora(o.aberturaEm)}</TableCell>
+                      <TableCell className="max-w-72 whitespace-normal text-xs">
+                        {o.procedimentos.map((p) => p['Descrição'] ?? Object.values(p).join(' ')).join('; ') || '—'}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            )}
           </CardContent>
         </Card>
       )}
@@ -310,6 +392,7 @@ function TabelaInternacoes({
           <TableHead>Alta</TableHead>
           <TableHead className="text-right">Dias</TableHead>
           <TableHead className="text-right">Diárias aut.</TableHead>
+          <TableHead className="text-right">Custo pago</TableHead>
         </TableRow>
       </TableHeader>
       <TableBody>
@@ -327,6 +410,12 @@ function TabelaInternacoes({
                   <div className="text-xs text-muted-foreground">
                     {[i.tipoBeneficiario, i.idade != null ? `${i.idade} anos` : null, i.empresa].filter(Boolean).join(' · ') || '—'}
                   </div>
+                  {(i.reinternacao || i.saudeMental) && (
+                    <div className="mt-1 flex gap-1">
+                      {i.reinternacao && <Badge variant="destructive">Reinternação · {i.reinternacao.diasDesdeAlta}d após alta</Badge>}
+                      {i.saudeMental && <Badge variant="neutral">Saúde mental</Badge>}
+                    </div>
+                  )}
                 </TableCell>
                 <TableCell>
                   <Badge variant={s.variant}>{s.rotulo}</Badge>
@@ -343,11 +432,14 @@ function TabelaInternacoes({
                   {acimaDasDiarias(i) && <AlertTriangle className="ml-1 inline size-3.5" />}
                 </TableCell>
                 <TableCell className="text-right">{i.diariasAutorizadas ?? '—'}</TableCell>
+                <TableCell className="text-right">
+                  {i.custoPago != null ? brl(i.custoPago) : <span className="text-xs text-muted-foreground">sem conta paga</span>}
+                </TableCell>
               </TableRow>
               {expandida && (
                 <TableRow className="bg-muted/30 hover:bg-muted/30">
                   <TableCell />
-                  <TableCell colSpan={8} className="whitespace-normal">
+                  <TableCell colSpan={9} className="whitespace-normal">
                     <Detalhe i={i} hoje={hoje} />
                   </TableCell>
                 </TableRow>
@@ -377,6 +469,16 @@ function Detalhe({ i, hoje }: { i: InternacaoGC; hoje: string }) {
         {campo('Regime', i.regime)}
         {campo('Acomodação', i.acomodacao)}
         {campo('Diárias solicitadas / autorizadas', `${i.diariasSolicitadas ?? '—'} / ${i.diariasAutorizadas ?? '—'}`)}
+        {campo(
+          'Custo pago (TXT)',
+          i.custoPago != null
+            ? `${brl(i.custoPago)} · ${i.lancamentosPagos} lançamento(s) · pago em ${i.competenciasPagamento.map(mesRotulo).join(', ')}`
+            : 'ainda sem conta paga',
+        )}
+        {campo(
+          'Reinternação',
+          i.reinternacao ? `sim — ${i.reinternacao.diasDesdeAlta} dia(s) após a alta da manifestação ${i.reinternacao.anterior}` : 'não',
+        )}
         {campo(
           i.situacao === 'internado' ? 'Dias internado (até hoje)' : 'Dias de internação',
           i.dias != null ? `${i.dias}${i.situacao === 'internado' ? ` (em ${dataBR(hoje)})` : ''}` : null,

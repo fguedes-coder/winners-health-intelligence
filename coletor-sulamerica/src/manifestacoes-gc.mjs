@@ -85,6 +85,7 @@ export function linhaDaManifestacao(m) {
     medicamentos: m.medicamentos,
     relacionadas: m.relacionadas,
     campos,
+    relatorios: m.relatorios ?? [],
     atualizado_em: new Date().toISOString(),
   }
 }
@@ -97,6 +98,17 @@ export function linhaDaManifestacao(m) {
 export async function gravarManifestacoes(db, manifestacoes) {
   const linhas = manifestacoes.map(linhaDaManifestacao).filter(Boolean)
   if (linhas.length) {
+    // Os relatórios em que a manifestação já apareceu se acumulam: uma
+    // internação psiquiátrica continua marcada depois de sair da janela.
+    const { data: antigas, error: aErr } = await db
+      .from('gc_manifestacoes')
+      .select('numero, relatorios')
+      .in('numero', linhas.map((l) => l.numero))
+    if (aErr) throw new Error(`Falha ao ler as manifestações gravadas: ${aErr.message}`)
+    const anteriores = new Map((antigas ?? []).map((a) => [a.numero, a.relatorios ?? []]))
+    for (const l of linhas) {
+      l.relatorios = [...new Set([...(anteriores.get(l.numero) ?? []), ...l.relatorios])].sort()
+    }
     const { error } = await db.from('gc_manifestacoes').upsert(linhas, { onConflict: 'numero' })
     if (error) throw new Error(`Falha ao gravar as manifestações: ${error.message}`)
   }
