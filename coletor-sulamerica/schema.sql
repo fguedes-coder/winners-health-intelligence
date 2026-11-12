@@ -72,7 +72,7 @@ declare
   v_id uuid;
 begin
   if p_nome not in ('sulamerica_login', 'sulamerica_senha', 'sulamerica_imap_usuario', 'sulamerica_imap_senha',
-                    'corretor_login', 'corretor_senha') then
+                    'corretor_login', 'corretor_senha', 'gc_login', 'gc_senha') then
     raise exception 'credencial desconhecida: %', p_nome;
   end if;
   if coalesce(btrim(p_valor), '') = '' then
@@ -99,11 +99,11 @@ set search_path = ''
 as $$
   select s.name,
          s.updated_at,
-         case when s.name in ('sulamerica_login', 'sulamerica_imap_usuario', 'corretor_login') then d.decrypted_secret end
+         case when s.name in ('sulamerica_login', 'sulamerica_imap_usuario', 'corretor_login', 'gc_login') then d.decrypted_secret end
   from vault.secrets s
   join vault.decrypted_secrets d on d.id = s.id
   where s.name in ('sulamerica_login', 'sulamerica_senha', 'sulamerica_imap_usuario', 'sulamerica_imap_senha',
-                   'corretor_login', 'corretor_senha');
+                   'corretor_login', 'corretor_senha', 'gc_login', 'gc_senha');
 $$;
 revoke all on function public.status_credenciais_sulamerica() from public, anon;
 grant execute on function public.status_credenciais_sulamerica() to authenticated;
@@ -118,7 +118,95 @@ as $$
   select name, decrypted_secret
   from vault.decrypted_secrets
   where name in ('sulamerica_login', 'sulamerica_senha', 'sulamerica_imap_usuario', 'sulamerica_imap_senha',
-                 'corretor_login', 'corretor_senha');
+                 'corretor_login', 'corretor_senha', 'gc_login', 'gc_senha');
 $$;
 revoke all on function public.credenciais_sulamerica_coletor() from public, anon, authenticated;
 grant execute on function public.credenciais_sulamerica_coletor() to service_role;
+
+-- ---------------------------------------------------------------------------
+-- Gestão Conectada (12/11/2026): internações e autorizações lidas no portal
+-- sulamerica.my.site.com/gestaoconectada. O portal só mostra 7/30/60 dias;
+-- aqui fica o histórico. DADO DE SAÚDE SENSÍVEL (LGPD art. 11): o app só LÊ
+-- (select para authenticated); quem grava é o coletor (service_role).
+-- ---------------------------------------------------------------------------
+
+create table if not exists public.gc_manifestacoes (
+  numero text primary key,
+  case_id text not null unique,
+  tipo_registro text,
+  status_portal text,
+  status text,
+  numero_guia text,
+  abertura_em timestamptz,
+  fechamento_em timestamptz,
+  motivo_autorizacao text,
+  motivo_negativa text,
+  prestador_codigo text,
+  prestador_nome text,
+  beneficiario_nome text,
+  -- 17 dígitos no portal; a base do Health usa os 16 primeiros (o 17º é verificador).
+  carteirinha_sulamerica text,
+  carteirinha text generated always as (left(carteirinha_sulamerica, 16)) stored,
+  medico_nome text,
+  medico_conselho text,
+  medico_uf text,
+  medico_numero text,
+  data_prevista date,
+  carater text,
+  regime text,
+  tipo_internacao text,
+  diarias_solicitadas integer,
+  diarias_autorizadas integer,
+  acomodacao text,
+  data_internacao date,
+  data_alta date,
+  tempo_internacao integer,
+  hipotese_diagnostica text,
+  indicacao_clinica text,
+  observacao text,
+  procedimentos jsonb not null default '[]'::jsonb,
+  medicamentos jsonb not null default '[]'::jsonb,
+  relacionadas jsonb not null default '[]'::jsonb,
+  campos jsonb not null default '{}'::jsonb,
+  primeira_coleta_em timestamptz not null default now(),
+  atualizado_em timestamptz not null default now()
+);
+
+create index if not exists gc_manifestacoes_carteirinha on public.gc_manifestacoes (carteirinha);
+create index if not exists gc_manifestacoes_internacao on public.gc_manifestacoes (data_internacao desc);
+create index if not exists gc_manifestacoes_abertura on public.gc_manifestacoes (abertura_em desc);
+
+alter table public.gc_manifestacoes enable row level security;
+drop policy if exists gc_manifestacoes_select on public.gc_manifestacoes;
+create policy gc_manifestacoes_select on public.gc_manifestacoes for select to authenticated using (true);
+revoke all on public.gc_manifestacoes from anon, authenticated;
+grant select on public.gc_manifestacoes to authenticated;
+grant all on public.gc_manifestacoes to service_role;
+
+-- Fila/histórico das atualizações. O botão "Atualizar agora" grava 'pendente'.
+create table if not exists public.coletas_gestao_conectada (
+  id uuid primary key default gen_random_uuid(),
+  origem text not null default 'manual' check (origem in ('manual', 'agendado')),
+  status text not null default 'pendente' check (status in ('pendente', 'executando', 'ok', 'erro')),
+  mensagem text,
+  relatorios_lidos integer,
+  manifestacoes integer,
+  internacoes_abertas integer,
+  solicitado_em timestamptz not null default now(),
+  iniciado_em timestamptz,
+  concluido_em timestamptz
+);
+
+create unique index if not exists coletas_gestao_conectada_uma_em_andamento
+  on public.coletas_gestao_conectada ((true))
+  where status in ('pendente', 'executando');
+
+alter table public.coletas_gestao_conectada enable row level security;
+drop policy if exists coletas_gestao_conectada_select on public.coletas_gestao_conectada;
+drop policy if exists coletas_gestao_conectada_insert on public.coletas_gestao_conectada;
+create policy coletas_gestao_conectada_select on public.coletas_gestao_conectada for select to authenticated using (true);
+create policy coletas_gestao_conectada_insert on public.coletas_gestao_conectada for insert to authenticated
+  with check (status = 'pendente' and origem = 'manual');
+revoke all on public.coletas_gestao_conectada from anon, authenticated;
+grant select, insert on public.coletas_gestao_conectada to authenticated;
+grant all on public.coletas_gestao_conectada to service_role;

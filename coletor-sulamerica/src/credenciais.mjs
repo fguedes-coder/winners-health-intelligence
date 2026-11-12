@@ -1,4 +1,4 @@
-// Credenciais do portal SulAmérica e do e-mail que recebe o token.
+// Credenciais dos portais SulAmérica e do e-mail que recebe o token.
 //
 // O usuário as digita em Configurações → Robôs; ficam
 // criptografadas no Supabase Vault. A função credenciais_sulamerica_coletor
@@ -19,17 +19,27 @@ const ROTULOS = {
   sulamerica_imap_senha: 'senha desse e-mail',
 }
 
+/** Todos os valores do cofre, por nome. */
+async function lerCofre(db) {
+  const { data, error } = await db.rpc('credenciais_sulamerica_coletor')
+  if (error) throw new Error(`Não foi possível ler o acesso SulAmérica: ${error.message}`)
+  return Object.fromEntries((data ?? []).map((l) => [l.nome, l.valor ?? '']))
+}
+
+/** Par login/senha completo, ou null se faltar um dos dois. */
+function par(valores, login, senha) {
+  const l = String(valores[login] ?? '').trim()
+  const s = String(valores[senha] ?? '')
+  return l !== '' && s !== '' ? { login: l, senha: s } : null
+}
+
 /**
+ * Acesso do Robô do TXT (Integra + e-mail do token; Portal do Corretor opcional).
  * @param {import('@supabase/supabase-js').SupabaseClient} db
  * @returns {Promise<Credenciais>}
  */
 export async function carregarCredenciais(db) {
-  const { data, error } = await db.rpc('credenciais_sulamerica_coletor')
-  if (error) throw new Error(`Não foi possível ler o acesso SulAmérica: ${error.message}`)
-
-  const valores = Object.fromEntries((data ?? []).map((l) => [l.nome, l.valor ?? '']))
-  const temCorretor =
-    String(valores.corretor_login ?? '').trim() !== '' && String(valores.corretor_senha ?? '') !== ''
+  const valores = await lerCofre(db)
 
   const faltando = Object.keys(ROTULOS).filter((k) => !String(valores[k] ?? '').trim())
   if (faltando.length > 0) {
@@ -42,8 +52,14 @@ export async function carregarCredenciais(db) {
   return {
     portal: { login: valores.sulamerica_login.trim(), senha: valores.sulamerica_senha },
     email: { usuario: valores.sulamerica_imap_usuario.trim(), senha: valores.sulamerica_imap_senha },
-    corretor: temCorretor
-      ? { login: valores.corretor_login.trim(), senha: valores.corretor_senha }
-      : null,
+    corretor: par(valores, 'corretor_login', 'corretor_senha'),
   }
+}
+
+/**
+ * Acesso ao Gestão Conectada, independente do Robô do TXT.
+ * @returns {Promise<{ login: string, senha: string } | null>}
+ */
+export async function carregarCredenciaisGC(db) {
+  return par(await lerCofre(db), 'gc_login', 'gc_senha')
 }

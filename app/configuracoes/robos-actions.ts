@@ -16,6 +16,9 @@ const CAMPOS = {
   // Portal do Corretor — só para ler o valor da fatura do mês. Opcional.
   corretor_login: 'login_corretor',
   corretor_senha: 'senha_corretor',
+  // Gestão Conectada — internações e autorizações.
+  gc_login: 'login_gc',
+  gc_senha: 'senha_gc',
 } as const
 
 type NomeCredencial = keyof typeof CAMPOS
@@ -27,17 +30,30 @@ export type StatusRoboSulAmerica = {
   disponivel: boolean
   credenciais: Record<NomeCredencial, StatusCredencial>
   ultimaBusca: { competencia: string; status: string; mensagem: string | null; quando: string } | null
+  /** Última atualização do Gestão Conectada (null se nunca rodou ou a tabela não existe). */
+  gestaoConectada: {
+    status: string
+    mensagem: string | null
+    quando: string
+    manifestacoes: number | null
+    internacoesAbertas: number | null
+  } | null
 }
 
 const VAZIO: StatusCredencial = { cadastrada: false, atualizadoEm: null, valor: null }
 
 export async function getStatusRoboSulAmerica(): Promise<StatusRoboSulAmerica> {
   const supabase = await createClient()
-  const [{ data, error }, { data: coletas }] = await Promise.all([
+  const [{ data, error }, { data: coletas }, { data: gc }] = await Promise.all([
     supabase.rpc('status_credenciais_sulamerica'),
     supabase
       .from('coletas_sulamerica')
       .select('competencia, status, mensagem, solicitado_em, concluido_em')
+      .order('solicitado_em', { ascending: false })
+      .limit(1),
+    supabase
+      .from('coletas_gestao_conectada')
+      .select('status, mensagem, solicitado_em, concluido_em, manifestacoes, internacoes_abertas')
       .order('solicitado_em', { ascending: false })
       .limit(1),
   ])
@@ -52,13 +68,42 @@ export async function getStatusRoboSulAmerica(): Promise<StatusRoboSulAmerica> {
   }
 
   const c = coletas?.[0]
+  const g = gc?.[0]
   return {
     disponivel: !error,
     credenciais,
     ultimaBusca: c
       ? { competencia: c.competencia, status: c.status, mensagem: c.mensagem, quando: c.concluido_em ?? c.solicitado_em }
       : null,
+    gestaoConectada: g
+      ? {
+          status: g.status,
+          mensagem: g.mensagem,
+          quando: g.concluido_em ?? g.solicitado_em,
+          manifestacoes: g.manifestacoes,
+          internacoesAbertas: g.internacoes_abertas,
+        }
+      : null,
   }
+}
+
+/** "Atualizar agora" do Gestão Conectada: entra na fila do coletor. */
+export async function atualizarGestaoConectada(): Promise<{ ok: boolean; error?: string }> {
+  const auth = await requireAuthAction()
+  if ('error' in auth) return { ok: false, error: auth.error }
+
+  const supabase = await createClient()
+  const { error } = await supabase
+    .from('coletas_gestao_conectada')
+    .insert({ origem: 'manual', status: 'pendente' })
+  if (error) {
+    // Índice único: já existe uma atualização na fila ou em andamento.
+    if (error.code === '23505') return { ok: true }
+    return { ok: false, error: `Falha ao pedir a atualização: ${error.message}` }
+  }
+  revalidatePath('/configuracoes')
+  revalidatePath('/internacoes')
+  return { ok: true }
 }
 
 /**
@@ -76,7 +121,10 @@ export async function salvarAcessoSulAmerica(formData: FormData): Promise<{ ok: 
     .filter(([, v]) => v.length > 0)
 
   for (const [nome, v] of valores) {
-    if ((nome === 'sulamerica_login' || nome === 'sulamerica_imap_usuario') && !/^\S+@\S+\.\S+$/.test(v)) {
+    if (
+      (nome === 'sulamerica_login' || nome === 'sulamerica_imap_usuario' || nome === 'gc_login') &&
+      !/^\S+@\S+\.\S+$/.test(v)
+    ) {
       return { ok: false, error: 'Login e e-mail precisam ser endereços de e-mail válidos.' }
     }
   }

@@ -51,3 +51,29 @@ do Corretor são digitados em
 ## Banco
 
 `schema.sql` cria a tabela da fila (RLS no padrão do projeto) e as funções do cofre de credenciais.
+
+## Gestão Conectada — internações (12/11/2026)
+
+Independente do TXT. A cada 6 h (6h–22h, São Paulo) — ou pelo botão
+**Atualizar agora** em Configurações → Robôs — o coletor:
+
+1. entra em `sulamerica.my.site.com/gestaoconectada` com o acesso cadastrado
+   em Configurações → Robôs (`gc_login`/`gc_senha` no Vault);
+2. lê os relatórios de internação da "Pasta Médico" (lista em `config.mjs`) e
+   colhe o ID de cada manifestação;
+3. relê também as internações já conhecidas e ainda sem alta (120 dias) — é
+   assim que a alta aparece depois que a internação sai da janela de 60 dias;
+4. abre cada ficha (Detalhes + Relacionado) e grava em `gc_manifestacoes`
+   (upsert pelo número; nunca apaga).
+
+Só navega e lê: não clica em nada que altere o portal. Dado de saúde sensível:
+nada de nome, carteirinha ou diagnóstico vai para o log.
+
+Teste só leitura (não grava, imprime só contagens):
+
+```
+node src/testar-gestao-conectada.mjs
+```
+
+Se o portal pedir verificação de identidade (código), o robô para e avisa —
+entrar uma vez pelo navegador costuma resolver.
