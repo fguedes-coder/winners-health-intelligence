@@ -85,7 +85,9 @@ export function InternacoesClient({
     const andamento = internacoes.filter((i) => i.situacao === 'em_analise' || i.situacao === 'aguardando')
     const mesAtual = hoje.slice(0, 7)
     const desde60 = menosDias(hoje, 60)
-    const confirmadas = internacoes.filter((i) => i.dataInternacao)
+    const confirmadas = internacoes.filter(
+      (i) => i.dataInternacao && i.situacao !== 'negada' && i.situacao !== 'cancelada',
+    )
     const ult60 = confirmadas.filter((i) => (i.dataInternacao ?? '') >= desde60)
     const altas = confirmadas.filter((i) => i.situacao === 'alta' && i.dias != null)
     const permanencia = altas.length ? altas.reduce((s, i) => s + (i.dias ?? 0), 0) / altas.length : null

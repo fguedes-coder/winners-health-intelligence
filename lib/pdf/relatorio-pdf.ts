@@ -1452,23 +1452,78 @@ class Relatorio {
     this.newContentPage()
     this.sectionTitle(numero, 'Internações — Gestão Conectada')
     this.paragraph(
-      'Internações acompanhadas em tempo real pelo portal SulAmérica Gestão Conectada: data de internação, alta, permanência e hospital. Diferente das contas pagas, que chegam semanas depois, aqui está o que aconteceu no período — e quem segue internado.',
+      'Internações acompanhadas pelo portal SulAmérica Gestão Conectada: data de internação, alta, permanência, hospital e motivo. A seção tem duas leituras: as internações cujas contas foram pagas no período (o número "Internações" do resumo executivo, que segue o mês de pagamento) e as internações que começaram no período, cujas contas ainda podem estar por chegar.',
     )
     const dec = (v: number) => v.toLocaleString('pt-BR', { maximumFractionDigits: 1 })
+    const dias = (v: number | null) => (v == null ? '—' : `${dec(v)} dias`)
+
+    // Uma linha por internação (nominal): quem, onde, quando, quanto tempo, quanto.
+    const tabelaCasos = (casos: ResumoInternacoesRelatorio['casos'], rotuloCusto: string, semCusto: string) => {
+      this.table(
+        [
+          { header: 'Beneficiário', width: 128 },
+          { header: 'Hospital', width: 100 },
+          { header: 'Internação / alta', width: 92 },
+          { header: 'Dias', width: 34, align: 'right' },
+          { header: 'Caráter / tipo', width: 80 },
+          { header: rotuloCusto, width: USABLE_W - 434, align: 'right' },
+        ],
+        casos.map((c) => [
+          [c.beneficiario, c.perfil, c.reinternacao ? `REINTERNAÇÃO (${c.reinternacao})` : '', c.saudeMental ? 'SAÚDE MENTAL' : '']
+            .filter(Boolean)
+            .join('\n'),
+          c.hospital,
+          `${c.internacao}\n${c.alta}`,
+          c.dias == null ? '—' : String(c.dias),
+          c.caraterTipo,
+          c.custo == null ? semCusto : formatBRL(c.custo),
+        ]),
+      )
+      this.table(
+        [
+          { header: 'Beneficiário', width: 128 },
+          { header: 'Motivo (hipótese, indicação clínica e procedimentos)', width: USABLE_W - 128 },
+        ],
+        casos.map((c) => [`${c.beneficiario}\n${c.internacao}`, c.motivo]),
+      )
+    }
+
+    // ---- A. Contas pagas no período ----------------------------------------
+    const p = r.pagas
+    if (p.total > 0) {
+      this.subTitle('Internações pagas no período')
+      this.kpis([
+        {
+          label: 'Internações pagas',
+          valor:
+            p.pessoasTXT != null && p.pessoasTXT !== p.total
+              ? `${p.total} de ${p.pessoasTXT}`
+              : p.total.toLocaleString('pt-BR'),
+          destaque: true,
+        },
+        { label: 'Valor pago', valor: formatBRL(p.valor), destaque: true },
+        { label: 'Urgência / emergência', valor: p.urgencia.toLocaleString('pt-BR') },
+        { label: 'Permanência média', valor: dias(p.permanenciaMedia) },
+        { label: 'Reinternações (até 30 dias)', valor: p.reinternacoes.toLocaleString('pt-BR'), destaque: p.reinternacoes > 0 },
+      ])
+      if (!this.anonimizado && p.casos.length > 0) tabelaCasos(p.casos, 'Pago no período', '—')
+    }
+
+    // ---- B. Internações que começaram no período ---------------------------
+    this.subTitle('Internações que começaram no período')
     this.kpis([
       { label: 'Internações no período', valor: r.total.toLocaleString('pt-BR'), destaque: true },
       { label: 'Urgência / eletivas', valor: `${r.urgencia} / ${r.eletivas}` },
       { label: 'Cirúrgicas / clínicas', valor: `${r.cirurgicas} / ${r.clinicas}` },
       { label: 'Altas / em curso', valor: `${r.altas} / ${r.emCurso}` },
-      { label: 'Permanência média', valor: r.permanenciaMedia == null ? '—' : `${dec(r.permanenciaMedia)} dias`, destaque: true },
-      { label: 'Reinternações (≤ 30 dias)', valor: r.reinternacoes.toLocaleString('pt-BR'), destaque: r.reinternacoes > 0 },
+      { label: 'Permanência média', valor: dias(r.permanenciaMedia), destaque: true },
+      { label: 'Reinternações (até 30 dias)', valor: r.reinternacoes.toLocaleString('pt-BR'), destaque: r.reinternacoes > 0 },
       { label: 'Internações em saúde mental', valor: r.saudeMental },
       { label: 'Custo pago já identificado', valor: `${formatBRL(r.custoPago)} (${r.comCusto}/${r.total})` },
       { label: 'Internados hoje', valor: r.internadosHoje.toLocaleString('pt-BR') },
     ])
 
     if (r.hospitais.length > 0) {
-      this.subTitle('Hospitais')
       this.table(
         [
           { header: 'Hospital', width: USABLE_W - 180 },
@@ -1478,48 +1533,20 @@ class Relatorio {
         r.hospitais.map((h) => [h.nome, String(h.internacoes), String(h.dias)]),
       )
     }
+    if (!this.anonimizado && r.casos.length > 0) tabelaCasos(r.casos, 'Custo pago', 'a pagar')
 
     if (this.anonimizado) {
       this.nota(
-        'Por se tratar de dado de saúde sensível, esta seção apresenta apenas indicadores agregados, sem identificação individual — nem por pseudônimo.',
+        'Por se tratar de dado de saúde sensível, esta seção apresenta apenas indicadores agregados, sem identificação individual — nem por pseudônimo. Hospitais com menos de 5 pessoas no período aparecem agrupados.',
       )
-    } else if (r.casos.length > 0) {
-      this.subTitle('Internações do período — caso a caso')
-      this.table(
-        [
-          { header: 'Beneficiário', width: 128 },
-          { header: 'Hospital', width: 100 },
-          { header: 'Internação → alta', width: 92 },
-          { header: 'Dias', width: 34, align: 'right' },
-          { header: 'Caráter / tipo', width: 80 },
-          { header: 'Custo pago', width: USABLE_W - 434, align: 'right' },
-        ],
-        r.casos.map((c) => [
-          [c.beneficiario, c.perfil, c.reinternacao ? `REINTERNAÇÃO (${c.reinternacao})` : '', c.saudeMental ? 'SAÚDE MENTAL' : '']
-            .filter(Boolean)
-            .join('\n'),
-          c.hospital,
-          `${c.internacao} → ${c.alta}`,
-          c.dias == null ? '—' : String(c.dias),
-          c.caraterTipo,
-          c.custo == null ? 'a pagar' : formatBRL(c.custo),
-        ]),
-      )
-      this.subTitle('Motivo de cada internação')
-      this.table(
-        [
-          { header: 'Beneficiário', width: 128 },
-          { header: 'Motivo (hipótese, indicação clínica e procedimentos)', width: USABLE_W - 128 },
-        ],
-        r.casos.map((c) => [`${c.beneficiario}\n${c.internacao}`, c.motivo]),
-      )
+    } else if (r.casos.length > 0 || p.casos.length > 0) {
       this.nota(
         'Uso interno — dado de saúde sensível (LGPD, art. 11). Esta versão identificada não deve ser enviada à empresa contratante; para ela, use o relatório anonimizado.',
       )
     }
 
     const fonte = r.coletaDesde
-      ? `Fonte: SulAmérica Gestão Conectada, com dados a partir de ${r.coletaDesde.slice(8, 10)}/${r.coletaDesde.slice(5, 7)}/${r.coletaDesde.slice(0, 4)}. Custo: contas pagas do arquivo da operadora ligadas a cada internação pela carteirinha e pelas datas.`
+      ? `Fonte: SulAmérica Gestão Conectada, com dados a partir de ${r.coletaDesde.slice(8, 10)}/${r.coletaDesde.slice(5, 7)}/${r.coletaDesde.slice(0, 4)}. Custo: contas pagas do arquivo da operadora ligadas a cada internação pela carteirinha e pelas datas. Solicitações negadas ou canceladas não entram.`
       : 'Fonte: SulAmérica Gestão Conectada.'
     this.nota(fonte)
     if (r.interpretacao) this.calloutInterpretacao(r.interpretacao)

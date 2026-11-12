@@ -13,6 +13,10 @@ Módulos principais (ver pastas em `app/`):
 - Dashboard executivo (`app/dashboard`)
 - Radar de Risco (`app/radar-risco`)
 - Jornada Assistencial (`app/jornada-assistencial`)
+- Internações (`app/internacoes`) — tempo real pelo SulAmérica Gestão
+  Conectada (robô em `coletor-sulamerica/src/gestao-conectada.mjs`, tabela
+  `gc_manifestacoes`); custo ligado ao TXT, reinternação ≤ 30 dias, saúde
+  mental; seção própria no relatório executivo (`lib/internacoes-relatorio.ts`)
 - Sinistralidade (`app/sinistralidade`)
 - Utilização (`app/utilizacao`)
 - Relatórios (`app/relatorios`)
@@ -61,6 +65,23 @@ Não ativar isso sem confirmar antes — é uma decisão pendente, não um bug.
 - Criptografia de PII em nível de coluna
 - Processamento assíncrono via Inngest ou Trigger.dev
 - Rollout protegido por feature flag para não impactar os módulos existentes
+
+## Gestão Conectada — estado (12/11/2026)
+
+Fases 1 e 2 em produção (PRs #43 e #44). O histórico começa na primeira
+coleta (portal só mostra 60 dias). Pendências possíveis: alerta ativo
+(nova internação de urgência, passou das diárias), item "internações" no
+Winners Decide IA. Versão nominal do relatório é só para uso interno — a
+empresa recebe a anonimizada.
+
+Ajustes após conferir o relatório de out/26 (PR fix/internacoes-relatorio):
+seção do relatório agora tem "Internações pagas no período" (explica o número
+do resumo executivo, que é por mês de pagamento) + "que começaram no período";
+negadas/canceladas fora de custo e reinternação; reinternação compara com a
+última alta; no anonimizado, hospital com < 5 pessoas vai para "Demais".
+Próximo passo proposto (Fase 3, aguarda aprovação): varredura semanal das 191
+fichas de beneficiário (histórico > 1 ano), todas as autorizações (SADT, OPME,
+prorrogação, quimio) e filial/plano de cada vida.
 
 ## Ao final de uma sessão longa
 
