@@ -191,8 +191,36 @@ async function idsDoRelatorio(s, reportId) {
       })
       .catch(() => null)
     if (r && r.total != null) {
-      const ids = [...new Set(r.hrefs.map((h) => ID_CASO.exec(h ?? '')?.[1]).filter(Boolean))]
-      if (r.total === 0 || ids.length > 0) return ids
+      const ids = new Set(r.hrefs.map((h) => ID_CASO.exec(h ?? '')?.[1]).filter(Boolean))
+      if (r.total === 0) return []
+      if (ids.size > 0) {
+        // Tabela virtualizada: relatório grande (ex.: autorizações de 1 ano)
+        // só mostra as primeiras linhas — rola em passos até parar de crescer.
+        // (Total = linhas; uma manifestação pode ocupar mais de uma linha.)
+        let parado = 0
+        for (let i = 0; i < 400 && parado < 8 && ids.size < r.total; i++) {
+          const q = await frame.evaluate((passo) => {
+            const hrefs = [...document.querySelectorAll('a[href]')].map((a) => a.getAttribute('href'))
+            let rolou = false
+            for (const el of document.querySelectorAll('*')) {
+              if (el.scrollHeight > el.clientHeight + 20 && /auto|scroll/.test(getComputedStyle(el).overflowY)) {
+                const antes = el.scrollTop
+                el.scrollTop = antes + passo
+                if (el.scrollTop !== antes) rolou = true
+              }
+            }
+            return { hrefs, rolou }
+          }, 250)
+          const antes = ids.size
+          for (const h of q.hrefs) {
+            const id = ID_CASO.exec(h ?? '')?.[1]
+            if (id) ids.add(id)
+          }
+          parado = ids.size > antes ? 0 : q.rolou ? parado + 0.5 : parado + 1
+          await s.page.waitForTimeout(400)
+        }
+        return [...ids]
+      }
     }
     await s.page.waitForTimeout(2_000)
   }
