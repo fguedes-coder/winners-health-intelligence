@@ -34,7 +34,7 @@ const data = (iso: string | null) =>
 const tipoDe = (a: AutorizacaoGC) => a.tipoRegistro ?? 'Não informado'
 const procedimentos = (a: AutorizacaoGC) => {
   const d = a.procedimentos.map((p) => p['Descrição'] ?? p['Descricao'] ?? Object.values(p).join(' ')).filter(Boolean)
-  return d.length ? d.slice(0, 2).join('; ') + (d.length > 2 ? ` (+${d.length - 2})` : '') : '—'
+  return d.length ? d.slice(0, 2).join('; ') + (d.length > 2 ? ` (+${d.length - 2})` : '') : (a.material ?? '—')
 }
 
 export function AutorizacoesCard({

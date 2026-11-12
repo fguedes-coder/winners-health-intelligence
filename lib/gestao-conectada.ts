@@ -407,6 +407,8 @@ export type AutorizacaoGC = {
   motivoNegativa: string | null
   procedimentos: ItemLista[]
   medicamentos: ItemLista[]
+  /** OPME: o material vem num campo próprio, não na lista de procedimentos. */
+  material: string | null
   saudeMental: boolean
 }
 
@@ -420,7 +422,7 @@ export function situacaoAutorizacao(status: string | null): 'autorizada' | 'nega
 }
 
 const COLUNAS_AUTORIZACAO =
-  'numero, tipo_registro, status_portal, abertura_em, fechamento_em, carteirinha, beneficiario_nome, prestador_nome, medico_nome, carater, indicacao_clinica, hipotese_diagnostica, motivo_negativa, procedimentos, medicamentos, relatorios'
+  'numero, tipo_registro, status_portal, abertura_em, fechamento_em, carteirinha, beneficiario_nome, prestador_nome, medico_nome, carater, indicacao_clinica, hipotese_diagnostica, motivo_negativa, procedimentos, medicamentos, relatorios, campos'
 
 type LinhaAutorizacao = {
   numero: string
@@ -439,6 +441,7 @@ type LinhaAutorizacao = {
   procedimentos: ItemLista[] | null
   medicamentos: ItemLista[] | null
   relatorios: string[] | null
+  campos: Record<string, string> | null
 }
 
 /**
@@ -491,6 +494,7 @@ export async function getAutorizacoesGC(desde: string): Promise<AutorizacaoGC[]>
       motivoNegativa: l.motivo_negativa,
       procedimentos: l.procedimentos ?? [],
       medicamentos: l.medicamentos ?? [],
+      material: l.campos?.['Especificação do Material Solicitado'] ?? null,
       saudeMental: ehSaudeMentalGC({
         relatorios: l.relatorios ?? [],
         indicacaoClinica: l.indicacao_clinica,
@@ -524,7 +528,7 @@ export async function getHistoricoGC(carteirinha: string): Promise<{
   const [{ data, error }, fichas] = await Promise.all([
     supabase
       .from('gc_manifestacoes')
-      .select('numero, tipo_registro, status_portal, abertura_em, prestador_nome, data_internacao, data_alta, carater, indicacao_clinica, procedimentos')
+      .select('numero, tipo_registro, status_portal, abertura_em, prestador_nome, data_internacao, data_alta, carater, indicacao_clinica, procedimentos, campos')
       .eq('carteirinha', cart)
       .order('abertura_em', { ascending: false })
       .limit(500),
@@ -542,8 +546,11 @@ export async function getHistoricoGC(carteirinha: string): Promise<{
     carater: string | null
     indicacao_clinica: string | null
     procedimentos: ItemLista[] | null
+    campos: Record<string, string> | null
   }[]).map((l) => {
     const procs = (l.procedimentos ?? []).map((p) => p['Descrição'] ?? p['Descricao'] ?? '').filter(Boolean)
+    const material = l.campos?.['Especificação do Material Solicitado']
+    if (!procs.length && material) procs.push(material)
     return {
       numero: l.numero,
       tipoRegistro: l.tipo_registro,
