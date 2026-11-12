@@ -306,8 +306,10 @@ function GestaoConectadaCard({ status }: { status: StatusRoboSulAmerica }) {
           Entra no SulAmérica Gestão Conectada, lê os relatórios de internação (confirmadas,
           em análise, sem alta, urgência, juntas médicas e negativas) e a ficha de cada
           internação — datas, alta, diárias, hospital, procedimentos e hipótese diagnóstica.
-          Atualiza sozinho a cada 6 horas, das 6h às 22h. O portal só mostra os últimos 60
-          dias; o histórico fica guardado no Health, em{' '}
+          Atualiza sozinho a cada 6 horas, das 6h às 22h, e lê também as demais autorizações
+          (exames, prorrogações, OPME). Uma vez por semana, de madrugada, faz a varredura da
+          ficha de cada carteirinha — plano, empresa e todo o histórico de autorizações. O
+          histórico fica guardado no Health, em{' '}
           <Link href="/internacoes" className="underline underline-offset-2">Internações</Link>.
           O robô só lê: não altera nada no portal.
         </CardDescription>
@@ -320,6 +322,16 @@ function GestaoConectadaCard({ status }: { status: StatusRoboSulAmerica }) {
               ? ` — ${ultima.manifestacoes} solicitação(ões) lida(s), ${ultima.internacoesAbertas ?? 0} internação(ões) sem alta`
               : ''}
             {ultima.status === 'erro' && ultima.mensagem ? `: ${ultima.mensagem}` : ''}
+          </p>
+        )}
+        {status.varreduraGC && (
+          <p className="text-sm text-muted-foreground">
+            Última varredura semanal: {ROTULO_STATUS_GC[status.varreduraGC.status] ?? status.varreduraGC.status} (
+            {data(status.varreduraGC.quando)})
+            {status.varreduraGC.status === 'ok' && status.varreduraGC.beneficiarios != null
+              ? ` — ${status.varreduraGC.beneficiarios} carteirinha(s) conferida(s), ${status.varreduraGC.manifestacoes ?? 0} solicitação(ões) nova(s) no histórico`
+              : ''}
+            {status.varreduraGC.mensagem ? `. ${status.varreduraGC.mensagem}` : ''}
           </p>
         )}
 

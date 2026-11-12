@@ -77,3 +77,25 @@ node src/testar-gestao-conectada.mjs
 
 Se o portal pedir verificação de identidade (código), o robô para e avisa —
 entrar uma vez pelo navegador costuma resolver.
+
+### Fase 3 — autorizações e varredura semanal
+
+- O ciclo de 6 h lê também o relatório "Solicitações de autorização (exceto
+  internação)" (~1 ano: exames SP/SADT, prorrogações, OPME, quimio…). Ficha já
+  gravada, encerrada no portal e lida há menos de 3 dias não é reaberta (só o
+  relatório é anotado).
+- **Varredura** (`tipo = 'varredura'` em `coletas_gestao_conectada`), de
+  madrugada (1h–5h) quando a última completa tiver mais de 6 dias: relatório
+  "Beneficiários sob gestão" (≈200 contas, "Linhas de detalhes" ligado e
+  rolagem em passos) → cada conta → cada carteirinha (`gc_beneficiarios`:
+  plano, código da empresa, vigente) → todas as manifestações da carteirinha
+  ("Exibir tudo" quando passa de 6). Só lê as manifestações que ainda não
+  estão no banco. Para em `GC_VARREDURA_MAX_MIN` (230) e continua na noite
+  seguinte, pulando carteirinhas conferidas há menos de 6 dias.
+
+Teste só leitura da varredura (não grava; imprime contagens, planos e
+códigos de empresa):
+
+```
+node src/testar-varredura.mjs 8   # minutos
+```

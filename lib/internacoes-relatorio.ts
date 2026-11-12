@@ -17,7 +17,7 @@
 //     datas, dias, motivo, custo e reinternação.
 
 import { K_ANONIMATO, rotuloPrestadorSeguro } from '@/lib/privacidade-clinica'
-import type { InternacaoGC, SituacaoInternacao } from '@/lib/gestao-conectada'
+import type { AutorizacaoGC, InternacaoGC, SituacaoInternacao } from '@/lib/gestao-conectada'
 
 export type CasoInternacaoRelatorio = {
   beneficiario: string
@@ -69,7 +69,20 @@ export type ResumoInternacoesRelatorio = {
     /** Só no nominal. Custo = valor pago NAS competências do relatório. */
     casos: CasoInternacaoRelatorio[]
   }
+  /** Autorizações fora internação abertas no período (null = sem dado). */
+  autorizacoes: ResumoAutorizacoes | null
   interpretacao: string
+}
+
+export type ResumoAutorizacoes = {
+  total: number
+  /** Texto pronto (no anonimizado, abaixo de K vira "menos de K"). */
+  pessoas: string
+  negadas: number
+  emAnalise: number
+  porTipo: { tipo: string; total: number; pessoas: string; negadas: number }[]
+  /** Só no nominal. */
+  casos: { beneficiario: string; data: string; tipo: string; situacao: string; prestador: string; procedimentos: string }[]
 }
 
 const SITUACAO: Record<SituacaoInternacao, string> = {
@@ -111,7 +124,8 @@ function casoDe(i: InternacaoGC, custo: number | null): CasoInternacaoRelatorio 
     internacao: dataBR(i.dataInternacao),
     alta: i.dataAlta ? dataBR(i.dataAlta) : i.situacao === 'internado' ? 'internado' : '—',
     dias: i.dias,
-    caraterTipo: [i.carater, i.tipoInternacao].filter(Boolean).join(' / ') || '—',
+    // "Urgência/Emergência" quebra no meio da palavra na coluna estreita do PDF.
+    caraterTipo: [i.carater?.replace(/Urg[eê]ncia\s*\/\s*Emerg[eê]ncia/i, 'Urgência'), i.tipoInternacao].filter(Boolean).join(' / ') || '—',
     situacao: SITUACAO[i.situacao],
     custo,
     reinternacao: i.reinternacao ? `${i.reinternacao.diasDesdeAlta}d após alta` : null,
@@ -131,6 +145,8 @@ export function resumirInternacoesRelatorio(
     anonimizado: boolean
     /** Nº de internações no TXT do período, como no resumo executivo. */
     pessoasTXT?: number | null
+    /** Autorizações fora internação (Fase 3); o período é filtrado aqui. */
+    autorizacoes?: AutorizacaoGC[] | null
   },
 ): ResumoInternacoesRelatorio | null {
   const inicio = `${opts.competenciaInicio}-01`
@@ -244,6 +260,16 @@ export function resumirInternacoesRelatorio(
   }
   if (internadosHoje > 0) partes.push(`Na data deste relatório, ${internadosHoje} beneficiário(s) seguem internados.`)
 
+  const autorizacoes = opts.autorizacoes
+    ? resumirAutorizacoes(opts.autorizacoes, inicio, fim, opts.anonimizado)
+    : null
+  if (autorizacoes && autorizacoes.total > 0) {
+    const top = autorizacoes.porTipo.slice(0, 2).map((t) => `${t.tipo} (${t.total})`).join(' e ')
+    partes.push(
+      `Fora internação, foram ${autorizacoes.total} pedido(s) de autorização no período — principalmente ${top}${autorizacoes.negadas ? `; ${autorizacoes.negadas} negado(s)` : ''}.`,
+    )
+  }
+
   return {
     inicio,
     fim,
@@ -265,6 +291,65 @@ export function resumirInternacoesRelatorio(
     hospitais,
     casos,
     pagas: resumoPagas,
+    autorizacoes,
     interpretacao: partes.join(' '),
+  }
+}
+
+const SIT_AUT = (status: string | null) =>
+  /negad/i.test(status ?? '')
+    ? 'Negada'
+    : /cancel/i.test(status ?? '')
+      ? 'Cancelada'
+      : /autoriz|liberad|aprovad/i.test(status ?? '')
+        ? 'Autorizada'
+        : 'Em análise'
+
+function resumirAutorizacoes(
+  todas: AutorizacaoGC[],
+  inicio: string,
+  fim: string,
+  anonimizado: boolean,
+): ResumoAutorizacoes {
+  // abertura_em vem com fuso; a data em São Paulo decide o mês.
+  const diaSP = (iso: string | null) =>
+    iso ? new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date(iso)) : ''
+  const doPeriodo = todas
+    .filter((a) => {
+      const d = diaSP(a.aberturaEm)
+      return d >= inicio && d <= fim && SIT_AUT(a.statusPortal) !== 'Cancelada'
+    })
+    .sort((a, b) => (a.aberturaEm ?? '').localeCompare(b.aberturaEm ?? ''))
+  const pessoasTxt = (n: number) => (anonimizado && n > 0 && n < K_ANONIMATO ? `menos de ${K_ANONIMATO}` : n.toLocaleString('pt-BR'))
+  const porTipo = new Map<string, { total: number; pessoas: Set<string>; negadas: number }>()
+  for (const a of doPeriodo) {
+    const t = a.tipoRegistro ?? 'Não informado'
+    const g = porTipo.get(t) ?? { total: 0, pessoas: new Set<string>(), negadas: 0 }
+    g.total++
+    g.pessoas.add(a.carteirinha ?? a.numero)
+    if (SIT_AUT(a.statusPortal) === 'Negada') g.negadas++
+    porTipo.set(t, g)
+  }
+  return {
+    total: doPeriodo.length,
+    pessoas: pessoasTxt(new Set(doPeriodo.map((a) => a.carteirinha ?? a.numero)).size),
+    negadas: doPeriodo.filter((a) => SIT_AUT(a.statusPortal) === 'Negada').length,
+    emAnalise: doPeriodo.filter((a) => SIT_AUT(a.statusPortal) === 'Em análise').length,
+    porTipo: [...porTipo.entries()]
+      .map(([tipo, g]) => ({ tipo, total: g.total, pessoas: pessoasTxt(g.pessoas.size), negadas: g.negadas }))
+      .sort((a, b) => b.total - a.total),
+    casos: anonimizado
+      ? []
+      : doPeriodo.slice(0, 40).map((a) => {
+          const procs = a.procedimentos.map((p) => p['Descrição'] ?? p['Descricao'] ?? '').filter(Boolean)
+          return {
+            beneficiario: a.beneficiarioNome ?? a.carteirinha ?? `manifestação ${a.numero}`,
+            data: dataBR(diaSP(a.aberturaEm) || null),
+            tipo: a.tipoRegistro ?? '—',
+            situacao: SIT_AUT(a.statusPortal),
+            prestador: a.prestador ?? '—',
+            procedimentos: procs.slice(0, 2).join('; ') + (procs.length > 2 ? '…' : '') || '—',
+          }
+        }),
   }
 }

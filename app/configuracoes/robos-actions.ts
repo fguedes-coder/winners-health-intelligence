@@ -38,13 +38,21 @@ export type StatusRoboSulAmerica = {
     manifestacoes: number | null
     internacoesAbertas: number | null
   } | null
+  /** Última varredura semanal do histórico (Fase 3). */
+  varreduraGC: {
+    status: string
+    mensagem: string | null
+    quando: string
+    beneficiarios: number | null
+    manifestacoes: number | null
+  } | null
 }
 
 const VAZIO: StatusCredencial = { cadastrada: false, atualizadoEm: null, valor: null }
 
 export async function getStatusRoboSulAmerica(): Promise<StatusRoboSulAmerica> {
   const supabase = await createClient()
-  const [{ data, error }, { data: coletas }, { data: gc }] = await Promise.all([
+  const [{ data, error }, { data: coletas }, { data: gc }, { data: varr }] = await Promise.all([
     supabase.rpc('status_credenciais_sulamerica'),
     supabase
       .from('coletas_sulamerica')
@@ -54,6 +62,12 @@ export async function getStatusRoboSulAmerica(): Promise<StatusRoboSulAmerica> {
     supabase
       .from('coletas_gestao_conectada')
       .select('status, mensagem, solicitado_em, concluido_em, manifestacoes, internacoes_abertas')
+      .order('solicitado_em', { ascending: false })
+      .limit(1),
+    supabase
+      .from('coletas_gestao_conectada')
+      .select('status, mensagem, solicitado_em, concluido_em, manifestacoes, beneficiarios')
+      .eq('tipo', 'varredura')
       .order('solicitado_em', { ascending: false })
       .limit(1),
   ])
@@ -69,6 +83,7 @@ export async function getStatusRoboSulAmerica(): Promise<StatusRoboSulAmerica> {
 
   const c = coletas?.[0]
   const g = gc?.[0]
+  const v = varr?.[0]
   return {
     disponivel: !error,
     credenciais,
@@ -82,6 +97,15 @@ export async function getStatusRoboSulAmerica(): Promise<StatusRoboSulAmerica> {
           quando: g.concluido_em ?? g.solicitado_em,
           manifestacoes: g.manifestacoes,
           internacoesAbertas: g.internacoes_abertas,
+        }
+      : null,
+    varreduraGC: v
+      ? {
+          status: v.status,
+          mensagem: v.mensagem,
+          quando: v.concluido_em ?? v.solicitado_em,
+          beneficiarios: v.beneficiarios,
+          manifestacoes: v.manifestacoes,
         }
       : null,
   }

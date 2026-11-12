@@ -12,6 +12,7 @@ import {
   type PanoramaFiltros,
 } from '@/lib/beneficiary-panorama'
 import { BeneficiaryPanoramaSections } from '@/components/beneficiary-panorama-sections'
+import { HistoricoGCCard } from '@/components/historico-gc-card'
 
 export const metadata = {
   title: 'Panorama do Beneficiário | Winners Health Intelligence',
@@ -143,6 +144,8 @@ export default async function BeneficiarioPanoramaPage({
         </header>
 
         <BeneficiaryPanoramaSections p={p} anonimizado={anonimizado} />
+
+        <HistoricoGCCard carteirinha={id} />
       </div>
     </DashboardShell>
   )

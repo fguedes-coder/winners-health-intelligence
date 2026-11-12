@@ -15,8 +15,15 @@ import { ArquivoIndisponivel, ArquivoSolicitado, baixarContasPagas } from './por
 import { carregarCredenciais, carregarCredenciaisGC } from './credenciais.mjs'
 import { buscarValorFatura } from './portal-corretor.mjs'
 import { associarFatura } from './fatura.mjs'
-import { coletarGestaoConectada } from './gestao-conectada.mjs'
-import { gravarManifestacoes, manifestacoesARevisitar } from './manifestacoes-gc.mjs'
+import { coletarGestaoConectada, varrerBeneficiarios } from './gestao-conectada.mjs'
+import {
+  casosParaPular,
+  estadoVarredura,
+  gravarCarteirinha,
+  gravarManifestacoes,
+  gravarOrigens,
+  manifestacoesARevisitar,
+} from './manifestacoes-gc.mjs'
 
 const db = createClient(config.supabase.url, config.supabase.chave, {
   auth: { persistSession: false, autoRefreshToken: false },
@@ -219,29 +226,62 @@ async function liberarTravadas() {
 
 // ---------------------------------------------------------------------------
 // Gestão Conectada — internações e autorizações (fila coletas_gestao_conectada)
+//   tipo 'rapida' ..... a cada `intervaloHoras`, das 6h às 22h: relatórios +
+//                       internações sem alta
+//   tipo 'varredura' .. de madrugada, a cada `intervaloDias`: ficha de cada
+//                       carteirinha e todo o histórico de manifestações
 // ---------------------------------------------------------------------------
 
-/** A cada `intervaloHoras`, de horaInicio a horaFim, se houver acesso cadastrado. */
+/** Há atualização pendente ou rodando (qualquer tipo)? */
+async function gcEmAndamento() {
+  const { data } = await db
+    .from('coletas_gestao_conectada')
+    .select('id')
+    .in('status', ['pendente', 'executando'])
+    .limit(1)
+  return Boolean(data?.length)
+}
+
 async function agendarGC() {
   const { hora } = agoraSP()
   const gc = config.gestaoConectada
-  if (hora < gc.horaInicio || hora >= gc.horaFim) return
+  if (await gcEmAndamento()) return
+  if (!(await carregarCredenciaisGC(db))) return
 
+  // Varredura de madrugada.
+  const v = gc.varredura
+  if (hora >= v.horaInicio && hora < v.horaFim) {
+    const [{ data: ultimaOk }, { data: ultimaTentativa }] = await Promise.all([
+      // Completa = 'ok' sem mensagem (a parcial grava aviso).
+      db.from('coletas_gestao_conectada').select('concluido_em').eq('tipo', 'varredura').eq('status', 'ok').is('mensagem', null)
+        .order('concluido_em', { ascending: false }).limit(1),
+      db.from('coletas_gestao_conectada').select('solicitado_em').eq('tipo', 'varredura')
+        .order('solicitado_em', { ascending: false }).limit(1),
+    ])
+    const okHa = ultimaOk?.[0] ? Date.now() - new Date(ultimaOk[0].concluido_em).getTime() : Infinity
+    const tentouHa = ultimaTentativa?.[0] ? Date.now() - new Date(ultimaTentativa[0].solicitado_em).getTime() : Infinity
+    // Completa há mais de N dias e nenhuma tentativa nesta madrugada.
+    if (okHa > v.intervaloDias * 86_400_000 && tentouHa > 12 * 3600_000) {
+      const { error } = await db.from('coletas_gestao_conectada').insert({ origem: 'agendado', status: 'pendente', tipo: 'varredura' })
+      if (!error) log('varredura do Gestão Conectada agendada')
+    }
+    return
+  }
+
+  if (hora < gc.horaInicio || hora >= gc.horaFim) return
   const { data: ultimas } = await db
     .from('coletas_gestao_conectada')
     .select('status, solicitado_em, concluido_em')
+    .eq('tipo', 'rapida')
     .order('solicitado_em', { ascending: false })
     .limit(1)
   const u = ultimas?.[0]
   if (u) {
-    if (['pendente', 'executando'].includes(u.status)) return
     const desde = Date.now() - new Date(u.concluido_em ?? u.solicitado_em).getTime()
     const espera = u.status === 'erro' ? 3 * 3600_000 : gc.intervaloHoras * 3600_000
     if (desde < espera) return
   }
-  if (!(await carregarCredenciaisGC(db))) return
-
-  const { error } = await db.from('coletas_gestao_conectada').insert({ origem: 'agendado', status: 'pendente' })
+  const { error } = await db.from('coletas_gestao_conectada').insert({ origem: 'agendado', status: 'pendente', tipo: 'rapida' })
   if (!error) log('atualização do Gestão Conectada agendada')
 }
 
@@ -260,30 +300,25 @@ async function processarGC() {
     .update({ status: 'executando', iniciado_em: agora })
     .eq('id', p.id)
     .eq('status', 'pendente')
-    .select('id')
+    .select('id, tipo')
     .maybeSingle()
   if (!coleta) return
 
-  log(`Gestão Conectada · coleta ${coleta.id}`)
+  log(`Gestão Conectada · ${coleta.tipo} ${coleta.id}`)
   try {
     const credenciais = await carregarCredenciaisGC(db)
     if (!credenciais) throw new Error('Acesso ao Gestão Conectada não cadastrado em Configurações → Robôs.')
-    const revisitar = await manifestacoesARevisitar(db)
-    const { manifestacoes, relatorios } = await coletarGestaoConectada({
-      credenciais,
-      log: (m) => log(`  ${m}`),
-      revisitar,
-    })
-    const { gravadas, internacoesAbertas } = await gravarManifestacoes(db, manifestacoes)
+    const fim = coleta.tipo === 'varredura' ? await executarVarredura(credenciais) : await executarRapida(credenciais)
     await db.from('coletas_gestao_conectada').update({
       status: 'ok',
-      mensagem: null,
-      relatorios_lidos: relatorios,
-      manifestacoes: gravadas,
-      internacoes_abertas: internacoesAbertas,
+      mensagem: fim.mensagem ?? null,
+      relatorios_lidos: fim.relatorios ?? null,
+      manifestacoes: fim.manifestacoes,
+      internacoes_abertas: fim.internacoesAbertas ?? null,
+      beneficiarios: fim.beneficiarios ?? null,
       concluido_em: new Date().toISOString(),
     }).eq('id', coleta.id)
-    log(`  Gestão Conectada ok: ${gravadas} manifestação(ões), ${internacoesAbertas} internação(ões) sem alta`)
+    log(`  Gestão Conectada ok: ${fim.resumo}`)
   } catch (e) {
     const mensagem = String(e?.message ?? e).replace(/\s+/g, ' ').slice(0, 300)
     await db.from('coletas_gestao_conectada').update({
@@ -295,13 +330,57 @@ async function processarGC() {
   }
 }
 
+async function executarRapida(credenciais) {
+  const [revisitar, pular] = await Promise.all([manifestacoesARevisitar(db), casosParaPular(db)])
+  const { manifestacoes, origens, relatorios } = await coletarGestaoConectada({
+    credenciais,
+    log: (m) => log(`  ${m}`),
+    revisitar,
+    pular,
+  })
+  const { gravadas, internacoesAbertas } = await gravarManifestacoes(db, manifestacoes)
+  await gravarOrigens(db, origens)
+  return {
+    relatorios,
+    manifestacoes: gravadas,
+    internacoesAbertas,
+    resumo: `${gravadas} manifestação(ões) lidas, ${origens.length} já atualizadas, ${internacoesAbertas} internação(ões) sem alta`,
+  }
+}
+
+async function executarVarredura(credenciais) {
+  const v = config.gestaoConectada.varredura
+  const estado = await estadoVarredura(db, v.revisitarDias)
+  let gravadas = 0
+  const r = await varrerBeneficiarios({
+    credenciais,
+    log: (m) => log(`  ${m}`),
+    ...estado,
+    prazo: Date.now() + v.maxMinutos * 60_000,
+    aoLerCarteirinha: (c) => gravarCarteirinha(db, c),
+    aoLerManifestacoes: async (ms) => {
+      gravadas += (await gravarManifestacoes(db, ms)).gravadas
+    },
+  })
+  const resumo = `${r.contasLidas}/${r.contas} conta(s), ${r.carteirinhas} carteirinha(s) do contrato (${r.foraDoContrato} de outros contratos ignoradas), ${gravadas} manifestação(ões) nova(s)`
+  // Parou pelo prazo: fica 'ok' com aviso e a próxima madrugada continua de
+  // onde parou (carteirinhas conferidas são puladas).
+  if (!r.completa) {
+    return { manifestacoes: gravadas, beneficiarios: r.carteirinhas, mensagem: `Varredura parcial (continua na próxima madrugada): ${resumo}.`, resumo, parcial: true }
+  }
+  return { manifestacoes: gravadas, beneficiarios: r.carteirinhas, resumo }
+}
+
 async function liberarTravadasGC() {
-  const limite = new Date(Date.now() - 30 * 60_000).toISOString()
-  await db.from('coletas_gestao_conectada').update({
-    status: 'erro',
-    mensagem: 'Atualização interrompida (o coletor reiniciou). Tente novamente.',
-    concluido_em: new Date().toISOString(),
-  }).eq('status', 'executando').lt('iniciado_em', limite)
+  const agora = Date.now()
+  const limites = { rapida: 60, varredura: config.gestaoConectada.varredura.maxMinutos + 45 }
+  for (const [tipo, minutos] of Object.entries(limites)) {
+    await db.from('coletas_gestao_conectada').update({
+      status: 'erro',
+      mensagem: 'Atualização interrompida (o coletor reiniciou). Tente novamente.',
+      concluido_em: new Date().toISOString(),
+    }).eq('status', 'executando').eq('tipo', tipo).lt('iniciado_em', new Date(agora - minutos * 60_000).toISOString())
+  }
 }
 
 async function ciclo() {

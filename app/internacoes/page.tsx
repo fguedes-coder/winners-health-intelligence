@@ -2,7 +2,8 @@ import { BedDouble } from 'lucide-react'
 import { DashboardShell } from '@/components/dashboard-shell'
 import { EmptyState } from '@/components/empty-state'
 import { getBenefDisplay } from '@/lib/display-prefs-server'
-import { getInternacoesGC } from '@/lib/gestao-conectada'
+import { getAutorizacoesGC, getInternacoesGC, hojeSP } from '@/lib/gestao-conectada'
+import { AutorizacoesCard } from './autorizacoes-card'
 import { InternacoesClient } from './internacoes-client'
 
 export const metadata = {
@@ -13,9 +14,11 @@ export const metadata = {
 export const dynamic = 'force-dynamic'
 
 export default async function InternacoesPage() {
-  const [{ disponivel, internacoes, saudeMentalOutras, ultimaColeta, hoje }, benefDisplay] = await Promise.all([
+  const umAno = new Date(Date.parse(`${hojeSP()}T12:00:00Z`) - 365 * 86_400_000).toISOString().slice(0, 10)
+  const [{ disponivel, internacoes, saudeMentalOutras, ultimaColeta, hoje }, benefDisplay, autorizacoes] = await Promise.all([
     getInternacoesGC(),
     getBenefDisplay(),
+    getAutorizacoesGC(umAno),
   ])
 
   if (!disponivel || (internacoes.length === 0 && ultimaColeta?.status !== 'ok')) {
@@ -45,6 +48,9 @@ export default async function InternacoesPage() {
         hoje={hoje}
         benefDisplay={benefDisplay}
       />
+      <div className="mt-6">
+        <AutorizacoesCard autorizacoes={autorizacoes} hoje={hoje} benefDisplay={benefDisplay} />
+      </div>
     </DashboardShell>
   )
 }
