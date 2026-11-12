@@ -350,7 +350,9 @@ type LinhaCarteirinha = {
   verificado_em: string
 }
 
-const vigenteDe = (v: string | null) => (v == null ? null : /^(sim|true|verdadeiro|s)$/i.test(v.trim()))
+// O portal mostra "Vigente" / "Fora vigência".
+const vigenteDe = (v: string | null) =>
+  v == null ? null : /fora|n[aã]o|false|cancel|inativ/i.test(v) ? false : /vigente|sim|true|ativ/i.test(v) ? true : null
 
 function paraCarteirinha(l: LinhaCarteirinha): CarteirinhaGC {
   return {

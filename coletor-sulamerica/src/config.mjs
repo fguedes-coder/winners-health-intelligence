@@ -67,6 +67,14 @@ export const config = {
       revisitarDias: 6,
       // Para antes disso e continua na próxima noite.
       maxMinutos: Number(process.env.GC_VARREDURA_MAX_MIN ?? 230),
+      // Só carteirinhas do contrato do cliente. A pessoa pode ter carteirinhas
+      // de outros contratos (empregador anterior, odonto, adesão) visíveis no
+      // portal: essas são abertas só para ler o código e descartadas — nada é
+      // gravado nem lido do histórico delas (fora do escopo/base legal).
+      empresasCliente: (process.env.GC_EMPRESAS ?? '82CC9,82CCA,82CCB,82CCC')
+        .split(',')
+        .map((x) => x.trim().toUpperCase())
+        .filter(Boolean),
     },
   },
   imap: {

@@ -45,7 +45,7 @@ const r = await varrerBeneficiarios({
   },
 })
 const fmt = (m) => JSON.stringify(Object.fromEntries([...m].sort((a, b) => b[1] - a[1])))
-console.log(`[teste] ${((Date.now() - t0) / 60000).toFixed(1)} min · contas ${r.contasLidas}/${r.contas} · carteirinhas ${r.carteirinhas} (17 dígitos: ${carteirinhas17}, com manifestação: ${comManif}) · manifestações novas ${r.manifestacoesNovas} · completa ${r.completa}`)
+console.log(`[teste] ${((Date.now() - t0) / 60000).toFixed(1)} min · contas ${r.contasLidas}/${r.contas} · fora do contrato (ignoradas) ${r.foraDoContrato} · carteirinhas do contrato ${r.carteirinhas} (17 dígitos: ${carteirinhas17}, com manifestação: ${comManif}) · manifestações novas ${r.manifestacoesNovas} · completa ${r.completa}`)
 console.log(`[teste] rótulos da ficha: ${[...rotulos].sort().join(' · ')}`)
 console.log(`[teste] vigente: ${fmt(vigentes)}`)
 console.log(`[teste] código da empresa: ${fmt(empresas)}`)

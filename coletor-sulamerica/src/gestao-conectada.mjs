@@ -218,11 +218,22 @@ async function idsDoRelatorio(s, reportId) {
 export async function varrerBeneficiarios(opts) {
   const { credenciais, log, conferidas, contasConferidas, casosConhecidos, aoLerCarteirinha, aoLerManifestacoes, prazo } = opts
   const s = await abrirSessao(credenciais, log)
-  const res = { contas: 0, contasLidas: 0, carteirinhas: 0, manifestacoesNovas: 0, completa: false }
+  const res = { contas: 0, contasLidas: 0, carteirinhas: 0, foraDoContrato: 0, manifestacoesNovas: 0, completa: false }
+  const empresas = new Set(config.gestaoConectada.varredura.empresasCliente)
+  const doCliente = (campos) => empresas.has(String(campos['Código da Empresa'] ?? '').trim().toUpperCase())
   try {
-    const contas = await contasDoRelatorio(s, config.gestaoConectada.varredura.relatorioContas)
-    res.contas = contas.length
-    log(`varredura: ${contas.length} conta(s) no relatório de beneficiários`)
+    // A tabela às vezes carrega pela metade: tenta de novo até 3 vezes.
+    let contas = []
+    let total = null
+    for (let t = 1; t <= 3; t++) {
+      const r = await contasDoRelatorio(s, config.gestaoConectada.varredura.relatorioContas)
+      if (r.contas.length > contas.length) contas = r.contas
+      total = Math.max(total ?? 0, r.total ?? 0) || null
+      if (total && contas.length >= total) break
+      log(`varredura: relatório trouxe ${r.contas.length} de ${r.total ?? '?'} conta(s) — tentativa ${t}`)
+    }
+    res.contas = total ?? contas.length
+    log(`varredura: ${contas.length} conta(s) lidas do relatório de beneficiários (total ${total ?? '?'})`)
     if (contas.length === 0) throw new Error('O relatório de beneficiários veio vazio.')
 
     let pendentes = []
@@ -242,11 +253,26 @@ export async function varrerBeneficiarios(opts) {
       if (contasConferidas.has(conta)) continue
       try {
         const carteirinhas = await carteirinhasDaConta(s, conta)
+        let interrompida = false
         for (const b of carteirinhas) {
           if (conferidas.has(b.id)) continue
-          const c = await lerCarteirinha(s, b.href, conta)
+          if (Date.now() > prazo) {
+            interrompida = true
+            break
+          }
+          const c = await lerCarteirinha(s, b.href, conta, doCliente)
+          if (!c) {
+            res.foraDoContrato++
+            continue
+          }
           const novos = c.manifestacoes.filter((id) => !casosConhecidos.has(id))
           for (const id of novos) {
+            // Passou do prazo no meio: grava o que leu, mas não marca a
+            // carteirinha como conferida — a próxima noite termina.
+            if (Date.now() > prazo) {
+              interrompida = true
+              break
+            }
             try {
               pendentes.push({ ...(await lerManifestacao(s, id)), relatorios: [] })
               casosConhecidos.add(id)
@@ -258,10 +284,15 @@ export async function varrerBeneficiarios(opts) {
           // Grava as manifestações antes da carteirinha: se cair no meio, a
           // carteirinha não fica marcada como conferida sem o histórico.
           await despejar()
+          if (interrompida) break
           await aoLerCarteirinha(c)
           conferidas.add(b.id)
           res.carteirinhas++
+          if (res.carteirinhas % 10 === 0) {
+            log(`varredura: ${res.carteirinhas} carteirinha(s) do contrato, ${res.foraDoContrato} de outros contratos (ignoradas), ${res.manifestacoesNovas} manifestação(ões) nova(s)`)
+          }
         }
+        if (interrompida) continue // o topo do laço encerra pelo prazo
         res.contasLidas++
       } catch (e) {
         log(`conta ${conta.slice(0, 6)}… não lida: ${curto(e)}`)
@@ -271,7 +302,9 @@ export async function varrerBeneficiarios(opts) {
       }
     }
     await despejar()
-    res.completa = true
+    // Só é completa se o relatório veio inteiro; senão a próxima noite repete
+    // (as carteirinhas já conferidas são puladas).
+    res.completa = !total || contas.length >= total
     return res
   } finally {
     await s.fechar()
@@ -281,10 +314,11 @@ export async function varrerBeneficiarios(opts) {
 /** Contas (pessoas) do relatório, com "Linhas de detalhes" ligado e rolagem em passos. */
 async function contasDoRelatorio(s, reportId) {
   const frame = await frameDoRelatorio(s, reportId)
-  const total = await frame.evaluate(() => {
-    const t = /Total de registros\s*\n?\s*(\d[\d.]*)/.exec(document.body.innerText)?.[1]
-    return t ? Number(t.replace(/\./g, '')) : null
-  })
+  const lerTotal = () =>
+    frame.evaluate(() => {
+      const t = /Total de registros\s*\n?\s*(\d[\d.]*)/.exec(document.body.innerText)?.[1]
+      return t ? Number(t.replace(/\./g, '')) : null
+    })
   // Liga "Linhas de detalhes" (só exibe; não altera o relatório salvo).
   await frame.evaluate(() => {
     for (const c of document.querySelectorAll('input[type=checkbox]')) {
@@ -293,6 +327,14 @@ async function contasDoRelatorio(s, reportId) {
     }
   })
   await s.page.waitForTimeout(6_000)
+  // O total pode mudar enquanto o relatório termina de carregar: espera estabilizar.
+  let total = await lerTotal()
+  for (let i = 0; i < 6; i++) {
+    await s.page.waitForTimeout(2_500)
+    const t = await lerTotal()
+    if (t === total) break
+    total = t
+  }
 
   // A tabela é virtualizada (recicla as linhas): coleta enquanto rola em passos.
   const contas = new Set()
@@ -319,8 +361,7 @@ async function contasDoRelatorio(s, reportId) {
     if (total && contas.size >= total) break
     await s.page.waitForTimeout(400)
   }
-  // Se não chegou ao total, segue com o que leu: a próxima varredura completa.
-  return [...contas]
+  return { contas: [...contas], total }
 }
 
 /** Todas as funções de leitura atravessam shadow DOM (componentes Lightning). */
@@ -419,13 +460,17 @@ async function rolarLista(s) {
  *             manifestacoes: string[], totalManifestacoes: string | null }} Carteirinha
  */
 
-/** Ficha da carteirinha: campos + IDs de todas as manifestações. */
-async function lerCarteirinha(s, href, conta) {
+/**
+ * Ficha da carteirinha: campos + IDs de todas as manifestações. Devolve null
+ * (sem ler a lista de manifestações) se `aceitar(campos)` for falso.
+ */
+async function lerCarteirinha(s, href, conta, aceitar = () => true) {
   const id = ID_BENEF.exec(href)?.[1]
   await s.ir(href)
   await s.page.locator('.test-id__field-label').first().waitFor({ state: 'attached', timeout: 60_000 })
   await s.page.waitForTimeout(2_500)
   const p = await s.page.evaluate(COLETAR_PAGINA)
+  if (!aceitar(p.campos)) return null
   const titulo = p.titulos.find((t) => /^Manifesta/i.test(t)) ?? ''
   const total = /\((\d+\+?)\)/.exec(titulo)?.[1] ?? null
   const ids = new Set(p.hrefs.map((h) => ID_CASO.exec(h ?? '')?.[1]).filter(Boolean))

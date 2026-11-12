@@ -362,7 +362,7 @@ async function executarVarredura(credenciais) {
       gravadas += (await gravarManifestacoes(db, ms)).gravadas
     },
   })
-  const resumo = `${r.contasLidas}/${r.contas} conta(s), ${r.carteirinhas} carteirinha(s), ${gravadas} manifestação(ões) nova(s)`
+  const resumo = `${r.contasLidas}/${r.contas} conta(s), ${r.carteirinhas} carteirinha(s) do contrato (${r.foraDoContrato} de outros contratos ignoradas), ${gravadas} manifestação(ões) nova(s)`
   // Parou pelo prazo: fica 'ok' com aviso e a próxima madrugada continua de
   // onde parou (carteirinhas conferidas são puladas).
   if (!r.completa) {
