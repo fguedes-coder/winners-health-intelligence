@@ -13,7 +13,7 @@ export const metadata = {
 export const dynamic = 'force-dynamic'
 
 export default async function InternacoesPage() {
-  const [{ disponivel, internacoes, ultimaColeta, hoje }, benefDisplay] = await Promise.all([
+  const [{ disponivel, internacoes, saudeMentalOutras, ultimaColeta, hoje }, benefDisplay] = await Promise.all([
     getInternacoesGC(),
     getBenefDisplay(),
   ])
@@ -40,6 +40,7 @@ export default async function InternacoesPage() {
     <DashboardShell title="Internações">
       <InternacoesClient
         internacoes={internacoes}
+        saudeMentalOutras={saudeMentalOutras}
         ultimaColeta={ultimaColeta}
         hoje={hoje}
         benefDisplay={benefDisplay}

@@ -1,6 +1,12 @@
 import 'server-only'
 
 import { createClient } from '@/lib/supabase/server'
+import {
+  custoPorInternacao,
+  ehSaudeMentalGC,
+  reinternacoes,
+  type LancamentoTXT,
+} from '@/lib/internacoes-cruzamento'
 
 // Internações lidas no SulAmérica Gestão Conectada pelo coletor (tabela
 // gc_manifestacoes). Diferente do TXT de contas pagas — que chega semanas
@@ -46,6 +52,27 @@ export type InternacaoGC = {
   procedimentos: ItemLista[]
   medicamentos: ItemLista[]
   relacionadas: ItemLista[]
+  relatorios: string[]
+  saudeMental: boolean
+  /** Contas pagas no TXT ligadas a esta internação (null = ainda nenhuma). */
+  custoPago: number | null
+  lancamentosPagos: number
+  competenciasPagamento: string[]
+  /** Nova internação até 30 dias após a alta anterior da mesma pessoa. */
+  reinternacao: { anterior: string; diasDesdeAlta: number } | null
+}
+
+/** Solicitação de saúde mental que não é internação (ex.: tratamento de TEA). */
+export type SolicitacaoSaudeMentalGC = {
+  numero: string
+  tipoRegistro: string | null
+  statusPortal: string | null
+  aberturaEm: string | null
+  carteirinha: string | null
+  beneficiarioNome: string | null
+  prestador: string | null
+  indicacaoClinica: string | null
+  procedimentos: ItemLista[]
 }
 
 export type StatusColetaGC = {
@@ -112,6 +139,7 @@ type Linha = {
   procedimentos: ItemLista[] | null
   medicamentos: ItemLista[] | null
   relacionadas: ItemLista[] | null
+  relatorios: string[] | null
 }
 
 /**
@@ -122,6 +150,7 @@ type Linha = {
 export async function getInternacoesGC(): Promise<{
   disponivel: boolean
   internacoes: InternacaoGC[]
+  saudeMentalOutras: SolicitacaoSaudeMentalGC[]
   ultimaColeta: StatusColetaGC
   hoje: string
 }> {
@@ -132,7 +161,7 @@ export async function getInternacoesGC(): Promise<{
     supabase
       .from('gc_manifestacoes')
       .select(
-        'numero, tipo_registro, status_portal, abertura_em, carteirinha, beneficiario_nome, prestador_nome, medico_nome, carater, tipo_internacao, regime, acomodacao, data_prevista, data_internacao, data_alta, tempo_internacao, diarias_solicitadas, diarias_autorizadas, hipotese_diagnostica, indicacao_clinica, motivo_negativa, procedimentos, medicamentos, relacionadas',
+        'numero, tipo_registro, status_portal, abertura_em, carteirinha, beneficiario_nome, prestador_nome, medico_nome, carater, tipo_internacao, regime, acomodacao, data_prevista, data_internacao, data_alta, tempo_internacao, diarias_solicitadas, diarias_autorizadas, hipotese_diagnostica, indicacao_clinica, motivo_negativa, procedimentos, medicamentos, relacionadas, relatorios',
       )
       .ilike('tipo_registro', 'interna%')
       .order('abertura_em', { ascending: false })
@@ -149,13 +178,54 @@ export async function getInternacoesGC(): Promise<{
     ? { status: c.status, mensagem: c.mensagem, quando: c.concluido_em ?? c.solicitado_em }
     : null
 
-  if (error) return { disponivel: false, internacoes: [], ultimaColeta, hoje }
+  if (error) return { disponivel: false, internacoes: [], saudeMentalOutras: [], ultimaColeta, hoje }
   const linhas = (data ?? []) as Linha[]
+
+  // Saúde mental fora de internação (ex.: tratamento de TEA): só o que veio
+  // dos relatórios psiquiátricos/TEA do portal.
+  const { data: outras } = await supabase
+    .from('gc_manifestacoes')
+    .select('numero, tipo_registro, status_portal, abertura_em, carteirinha, beneficiario_nome, prestador_nome, indicacao_clinica, procedimentos, relatorios')
+    .not('tipo_registro', 'ilike', 'interna%')
+    .order('abertura_em', { ascending: false })
+    .limit(500)
+  const saudeMentalOutras: SolicitacaoSaudeMentalGC[] = ((outras ?? []) as (Pick<
+    Linha,
+    'numero' | 'tipo_registro' | 'status_portal' | 'abertura_em' | 'carteirinha' | 'beneficiario_nome' | 'prestador_nome' | 'indicacao_clinica' | 'procedimentos' | 'relatorios'
+  >)[])
+    .filter((o) => ehSaudeMentalGC({ relatorios: o.relatorios ?? [] }))
+    .map((o) => ({
+      numero: o.numero,
+      tipoRegistro: o.tipo_registro,
+      statusPortal: o.status_portal,
+      aberturaEm: o.abertura_em,
+      carteirinha: o.carteirinha,
+      beneficiarioNome: o.beneficiario_nome,
+      prestador: o.prestador_nome,
+      indicacaoClinica: o.indicacao_clinica,
+      procedimentos: o.procedimentos ?? [],
+    }))
 
   // Cadastro na base de vidas — a competência mais recente de cada carteirinha.
   const carteirinhas = [...new Set(linhas.map((l) => l.carteirinha).filter((x): x is string => Boolean(x)))]
   const cadastro = new Map<string, { tipo: string | null; empresa: string | null; nascimento: string | null; competencia: string }>()
+  let lancamentos: LancamentoTXT[] = []
   if (carteirinhas.length) {
+    // Contas de internação pagas (TXT) dessas pessoas — para o custo de cada internação.
+    const { data: ev } = await supabase
+      .from('eventos_utilizacao')
+      .select('cod_usuario, data_atendimento, valor_pago, competencia')
+      .eq('internacao', true)
+      .in('cod_usuario', carteirinhas)
+      .limit(20000)
+    lancamentos = ((ev ?? []) as { cod_usuario: string; data_atendimento: string | null; valor_pago: number | string | null; competencia: string | null }[])
+      .map((e) => ({
+        carteirinha: e.cod_usuario,
+        dataAtendimento: e.data_atendimento,
+        valorPago: Number(e.valor_pago ?? 0),
+        competencia: e.competencia,
+      }))
+
     const { data: vidas } = await supabase
       .from('beneficiario_vidas')
       .select('carteirinha, tipo, empresa, data_nascimento, competencia')
@@ -178,6 +248,15 @@ export async function getInternacoesGC(): Promise<{
       }
     }
   }
+
+  const base = linhas.map((l) => ({
+    numero: l.numero,
+    carteirinha: l.carteirinha,
+    dataInternacao: l.data_internacao,
+    dataAlta: l.data_alta,
+  }))
+  const custos = custoPorInternacao(base, lancamentos)
+  const reint = reinternacoes(base)
 
   const internacoes = linhas.map((l): InternacaoGC => {
     const situacao = situacaoDe(l)
@@ -217,8 +296,21 @@ export async function getInternacoesGC(): Promise<{
       procedimentos: l.procedimentos ?? [],
       medicamentos: l.medicamentos ?? [],
       relacionadas: l.relacionadas ?? [],
+      relatorios: l.relatorios ?? [],
+      saudeMental: ehSaudeMentalGC({
+        relatorios: l.relatorios ?? [],
+        indicacaoClinica: l.indicacao_clinica,
+        hipoteseDiagnostica: l.hipotese_diagnostica,
+        procedimentos: l.procedimentos ?? [],
+      }),
+      custoPago: custos.get(l.numero)?.valorPago ?? null,
+      lancamentosPagos: custos.get(l.numero)?.lancamentos ?? 0,
+      competenciasPagamento: custos.get(l.numero)?.competencias ?? [],
+      reinternacao: reint.get(l.numero)
+        ? { anterior: reint.get(l.numero)!.anterior, diasDesdeAlta: reint.get(l.numero)!.diasDesdeAlta }
+        : null,
     }
   })
 
-  return { disponivel: true, internacoes, ultimaColeta, hoje }
+  return { disponivel: true, internacoes, saudeMentalOutras, ultimaColeta, hoje }
 }

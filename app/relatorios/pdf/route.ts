@@ -10,6 +10,8 @@ import { competenciaPorExtenso, gerarAnaliseExecutiva, sinistralidadeAcumulada }
 import { gerarAnaliseWinnersDecide } from '@/lib/winners-decide-analysis'
 import { resumirRadar } from '@/lib/radar-agg'
 import { resumirSaudeMental } from '@/lib/saude-mental-agg'
+import { getInternacoesGC } from '@/lib/gestao-conectada'
+import { resumirInternacoesRelatorio } from '@/lib/internacoes-relatorio'
 import { criarAnonimizador, normalizarModoPrivacidade } from '@/lib/anonimizar'
 import { getBeneficiaryPanorama } from '@/lib/beneficiary-panorama'
 import { getRelatorioConfig } from '../actions'
@@ -85,7 +87,7 @@ export async function GET(request: NextRequest) {
 
   const modo = normalizarModoPrivacidade(sp.get('privacidade'))
 
-  const [data, carteiraInteira, painel, config, dataset] = await Promise.all([
+  const [data, carteiraInteira, painel, config, dataset, gc] = await Promise.all([
     getDashboardData({ mes }),
     // Sem filtro: fonte da série histórica. Mesmo cálculo do recorte, então o
     // mês de referência na série bate com o número do resto do relatório.
@@ -93,6 +95,8 @@ export async function GET(request: NextRequest) {
     getPainel({ mes }),
     getRelatorioConfig(),
     getWinnersDataset(),
+    // Internações do Gestão Conectada; falha aqui não derruba o relatório.
+    getInternacoesGC().catch(() => null),
   ])
   const { eventos, faturaPorCompetencia } = dataset
 
@@ -261,6 +265,14 @@ export async function GET(request: NextRequest) {
     config,
     resumoRadar,
     saudeMental,
+    internacoesGC:
+      gc?.disponivel && competenciaInicio && competenciaFim
+        ? resumirInternacoesRelatorio(gc.internacoes, {
+            competenciaInicio,
+            competenciaFim,
+            anonimizado: modo === 'anonimizado',
+          })
+        : null,
     analiseIA,
     miniResumos,
     modo,

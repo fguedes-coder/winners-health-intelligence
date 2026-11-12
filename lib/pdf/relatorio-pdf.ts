@@ -7,6 +7,7 @@ import type { DashboardData, PainelData } from '@/lib/queries'
 import type { AnaliseExecutiva } from '@/lib/analise-ia'
 import type { ResumoRadar } from '@/lib/radar-agg'
 import type { ResumoSaudeMental } from '@/lib/saude-mental-agg'
+import type { ResumoInternacoesRelatorio } from '@/lib/internacoes-relatorio'
 import type { AnaliseIA } from '@/lib/winners-decide-analysis'
 import { AVISO_LGPD, type ModoPrivacidade } from '@/lib/anonimizar'
 import type { RelatorioConfig } from '@/app/relatorios/actions'
@@ -186,6 +187,8 @@ export type RelatorioPdfInput = {
   resumoRadar: ResumoRadar
   /** Resumo dedicado de Saúde Mental (página exclusiva). */
   saudeMental: ResumoSaudeMental | null
+  /** Internações do SulAmérica Gestão Conectada no período (null = sem dado). */
+  internacoesGC?: ResumoInternacoesRelatorio | null
   /** Análise consultiva do módulo Winners Decide IA (OpenAI ou determinística). */
   analiseIA: AnaliseIA | null
   /** Mini-resumos dos 3 maiores ofensores financeiros (páginas individuais). */
@@ -1444,6 +1447,84 @@ class Relatorio {
     return BLUE
   }
 
+  // ---- seção: Internações (Gestão Conectada) -------------------------------
+  private secaoInternacoesGC(numero: string, r: ResumoInternacoesRelatorio) {
+    this.newContentPage()
+    this.sectionTitle(numero, 'Internações — Gestão Conectada')
+    this.paragraph(
+      'Internações acompanhadas em tempo real pelo portal SulAmérica Gestão Conectada: data de internação, alta, permanência e hospital. Diferente das contas pagas, que chegam semanas depois, aqui está o que aconteceu no período — e quem segue internado.',
+    )
+    const dec = (v: number) => v.toLocaleString('pt-BR', { maximumFractionDigits: 1 })
+    this.kpis([
+      { label: 'Internações no período', valor: r.total.toLocaleString('pt-BR'), destaque: true },
+      { label: 'Urgência / eletivas', valor: `${r.urgencia} / ${r.eletivas}` },
+      { label: 'Cirúrgicas / clínicas', valor: `${r.cirurgicas} / ${r.clinicas}` },
+      { label: 'Altas / em curso', valor: `${r.altas} / ${r.emCurso}` },
+      { label: 'Permanência média', valor: r.permanenciaMedia == null ? '—' : `${dec(r.permanenciaMedia)} dias`, destaque: true },
+      { label: 'Reinternações (≤ 30 dias)', valor: r.reinternacoes.toLocaleString('pt-BR'), destaque: r.reinternacoes > 0 },
+      { label: 'Internações em saúde mental', valor: r.saudeMental },
+      { label: 'Custo pago já identificado', valor: `${formatBRL(r.custoPago)} (${r.comCusto}/${r.total})` },
+      { label: 'Internados hoje', valor: r.internadosHoje.toLocaleString('pt-BR') },
+    ])
+
+    if (r.hospitais.length > 0) {
+      this.subTitle('Hospitais')
+      this.table(
+        [
+          { header: 'Hospital', width: USABLE_W - 180 },
+          { header: 'Internações', width: 90, align: 'right' },
+          { header: 'Dias de internação', width: 90, align: 'right' },
+        ],
+        r.hospitais.map((h) => [h.nome, String(h.internacoes), String(h.dias)]),
+      )
+    }
+
+    if (this.anonimizado) {
+      this.nota(
+        'Por se tratar de dado de saúde sensível, esta seção apresenta apenas indicadores agregados, sem identificação individual — nem por pseudônimo.',
+      )
+    } else if (r.casos.length > 0) {
+      this.subTitle('Internações do período — caso a caso')
+      this.table(
+        [
+          { header: 'Beneficiário', width: 128 },
+          { header: 'Hospital', width: 100 },
+          { header: 'Internação → alta', width: 92 },
+          { header: 'Dias', width: 34, align: 'right' },
+          { header: 'Caráter / tipo', width: 80 },
+          { header: 'Custo pago', width: USABLE_W - 434, align: 'right' },
+        ],
+        r.casos.map((c) => [
+          [c.beneficiario, c.perfil, c.reinternacao ? `REINTERNAÇÃO (${c.reinternacao})` : '', c.saudeMental ? 'SAÚDE MENTAL' : '']
+            .filter(Boolean)
+            .join('\n'),
+          c.hospital,
+          `${c.internacao} → ${c.alta}`,
+          c.dias == null ? '—' : String(c.dias),
+          c.caraterTipo,
+          c.custo == null ? 'a pagar' : formatBRL(c.custo),
+        ]),
+      )
+      this.subTitle('Motivo de cada internação')
+      this.table(
+        [
+          { header: 'Beneficiário', width: 128 },
+          { header: 'Motivo (hipótese, indicação clínica e procedimentos)', width: USABLE_W - 128 },
+        ],
+        r.casos.map((c) => [`${c.beneficiario}\n${c.internacao}`, c.motivo]),
+      )
+      this.nota(
+        'Uso interno — dado de saúde sensível (LGPD, art. 11). Esta versão identificada não deve ser enviada à empresa contratante; para ela, use o relatório anonimizado.',
+      )
+    }
+
+    const fonte = r.coletaDesde
+      ? `Fonte: SulAmérica Gestão Conectada, com dados a partir de ${r.coletaDesde.slice(8, 10)}/${r.coletaDesde.slice(5, 7)}/${r.coletaDesde.slice(0, 4)}. Custo: contas pagas do arquivo da operadora ligadas a cada internação pela carteirinha e pelas datas.`
+      : 'Fonte: SulAmérica Gestão Conectada.'
+    this.nota(fonte)
+    if (r.interpretacao) this.calloutInterpretacao(r.interpretacao)
+  }
+
   // ---- seção: Saúde Mental -------------------------------------------------
   private secaoSaudeMental(numero: string, sm: ResumoSaudeMental) {
     this.newContentPage()
@@ -2028,7 +2109,9 @@ class Relatorio {
 
     // Numeração dinâmica das seções finais (só aparecem quando há conteúdo).
     const temSaudeMental = Boolean(saudeMental && saudeMental.eventos > 0)
+    const internacoesGC = this.input.internacoesGC ?? null
     let n = 11
+    const numInternacoesGC = internacoesGC ? String(n++) : null
     const numSaudeMental = temSaudeMental ? String(n++) : null
     const numEconomia = temPlano ? String(n++) : null
     // Seção suprimida quando a análise não passou na validação automática:
@@ -2042,6 +2125,7 @@ class Relatorio {
     const iaPublicavel = Boolean(analiseIA && analiseIA.fonte === 'ia')
     const numIA = iaPublicavel ? String(n++) : null
     const numConclusoes = String(n++)
+    if (numInternacoesGC) secoes.push({ num: numInternacoesGC, nome: 'Internações — Gestão Conectada' })
     if (numSaudeMental) secoes.push({ num: numSaudeMental, nome: 'Saúde Mental' })
     if (numEconomia) secoes.push({ num: numEconomia, nome: 'Oportunidade de Economia' })
     if (numIA) secoes.push({ num: numIA, nome: 'Winners Decide IA' })
@@ -2490,6 +2574,11 @@ class Relatorio {
       )
       this.subTitle('Conclusão executiva')
       this.paragraph(plano.conclusao)
+    }
+
+    // INTERNAÇÕES — GESTÃO CONECTADA
+    if (numInternacoesGC && internacoesGC) {
+      this.secaoInternacoesGC(numInternacoesGC, internacoesGC)
     }
 
     // SAÚDE MENTAL (página exclusiva)

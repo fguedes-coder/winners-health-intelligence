@@ -43,12 +43,17 @@ export async function coletarGestaoConectada({ credenciais, log, revisitar = [] 
   try {
     await entrar(page, base, credenciais, log)
 
-    const ids = new Set(revisitar)
+    // ID da manifestação → relatórios em que apareceu (ex.: os de saúde mental).
+    /** @type {Map<string, Set<string>>} */
+    const ids = new Map(revisitar.map((id) => [id, new Set()]))
     let relatorios = 0
     for (const r of config.gestaoConectada.relatorios) {
       try {
         const achados = await idsDoRelatorio(page, base, r.id)
-        achados.forEach((id) => ids.add(id))
+        for (const id of achados) {
+          if (!ids.has(id)) ids.set(id, new Set())
+          ids.get(id).add(r.nome)
+        }
         relatorios++
         log(`relatório "${r.nome}": ${achados.length} manifestação(ões)`)
       } catch (e) {
@@ -59,9 +64,9 @@ export async function coletarGestaoConectada({ credenciais, log, revisitar = [] 
     if (relatorios === 0) throw new Error('Nenhum relatório do Gestão Conectada pôde ser lido.')
 
     const manifestacoes = []
-    for (const id of ids) {
+    for (const [id, origens] of ids) {
       try {
-        manifestacoes.push(await lerManifestacao(page, base, id))
+        manifestacoes.push({ ...(await lerManifestacao(page, base, id)), relatorios: [...origens] })
       } catch (e) {
         log(`manifestação ${id} não lida: ${String(e?.message ?? e).slice(0, 160)}`)
       }

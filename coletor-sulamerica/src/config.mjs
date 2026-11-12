@@ -47,6 +47,10 @@ export const config = {
       { id: '00O0Z000006iKS7UAM', nome: 'Internações de urgência/emergência' },
       { id: '00O3r000007QZxLEAW', nome: 'Juntas médicas em andamento' },
       { id: '00O3r000007HbUSEA0', nome: 'Solicitações negadas' },
+      // Saúde mental (Fase 2): internações psiquiátricas e tratamento de TEA.
+      { id: '00O3r0000073VK6EAM', nome: 'Solicitações Internação em Psiquiatria', tema: 'saude_mental' },
+      { id: '00OU5000008TSUAMA4', nome: 'Intern. Psiquiátricas por tempo de int.', tema: 'saude_mental' },
+      { id: '00OU5000003Mh7sMAC', nome: 'Solicitações de tto ao TEA', tema: 'saude_mental' },
     ],
   },
   imap: {
