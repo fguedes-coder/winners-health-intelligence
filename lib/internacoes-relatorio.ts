@@ -348,7 +348,7 @@ function resumirAutorizacoes(
             tipo: a.tipoRegistro ?? '—',
             situacao: SIT_AUT(a.statusPortal),
             prestador: a.prestador ?? '—',
-            procedimentos: procs.slice(0, 2).join('; ') + (procs.length > 2 ? '…' : '') || '—',
+            procedimentos: procs.slice(0, 2).join('; ') + (procs.length > 2 ? '…' : '') || a.material || '—',
           }
         }),
   }
