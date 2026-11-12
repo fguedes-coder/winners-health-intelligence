@@ -1557,10 +1557,10 @@ class Relatorio {
       if (!this.anonimizado && a.casos.length > 0) {
         this.table(
           [
-            { header: 'Beneficiário', width: 118 },
-            { header: 'Data', width: 58 },
-            { header: 'Tipo', width: 92 },
-            { header: 'Situação', width: 62 },
+            { header: 'Beneficiário', width: 112 },
+            { header: 'Data', width: 66 },
+            { header: 'Tipo', width: 88 },
+            { header: 'Situação', width: 64 },
             { header: 'Prestador e procedimentos', width: USABLE_W - 330 },
           ],
           a.casos.map((c) => [c.beneficiario, c.data, c.tipo, c.situacao, `${c.prestador}
