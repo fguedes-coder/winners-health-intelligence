@@ -410,7 +410,7 @@ function TabelaInternacoes({
                 <TableCell>
                   <div className="font-medium text-foreground">{nome(i)}</div>
                   <div className="text-xs text-muted-foreground">
-                    {[i.tipoBeneficiario, i.idade != null ? `${i.idade} anos` : null, i.empresa].filter(Boolean).join(' · ') || '—'}
+                    {[i.tipoBeneficiario, i.idade != null ? `${i.idade} anos` : null, i.empresa, i.plano].filter(Boolean).join(' · ') || '—'}
                   </div>
                   {(i.reinternacao || i.saudeMental) && (
                     <div className="mt-1 flex gap-1">

@@ -10,7 +10,7 @@ import { competenciaPorExtenso, gerarAnaliseExecutiva, sinistralidadeAcumulada }
 import { gerarAnaliseWinnersDecide } from '@/lib/winners-decide-analysis'
 import { resumirRadar } from '@/lib/radar-agg'
 import { resumirSaudeMental } from '@/lib/saude-mental-agg'
-import { getInternacoesGC } from '@/lib/gestao-conectada'
+import { getAutorizacoesGC, getInternacoesGC } from '@/lib/gestao-conectada'
 import { resumirInternacoesRelatorio } from '@/lib/internacoes-relatorio'
 import { criarAnonimizador, normalizarModoPrivacidade } from '@/lib/anonimizar'
 import { getBeneficiaryPanorama } from '@/lib/beneficiary-panorama'
@@ -119,6 +119,10 @@ export async function GET(request: NextRequest) {
 
   const competencias = data.resumoCompetencia.map((r) => r.competencia).sort()
   const competenciaInicio = competencias[0] ?? data.competenciaAtual ?? null
+  // Autorizações fora internação (Fase 3); o período é filtrado no resumo.
+  const autorizacoesGC = competenciaInicio
+    ? await getAutorizacoesGC(`${competenciaInicio}-01`).catch(() => null)
+    : null
   const competenciaFim =
     competencias[competencias.length - 1] ?? data.competenciaAtual ?? null
   const competenciaRef = competenciaFim ?? 'período atual'
@@ -272,6 +276,7 @@ export async function GET(request: NextRequest) {
             competenciaFim,
             anonimizado: modo === 'anonimizado',
             pessoasTXT: data.kpis.internacoes,
+            autorizacoes: autorizacoesGC,
           })
         : null,
     analiseIA,

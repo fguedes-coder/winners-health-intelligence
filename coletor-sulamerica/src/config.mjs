@@ -51,7 +51,23 @@ export const config = {
       { id: '00O3r0000073VK6EAM', nome: 'Solicitações Internação em Psiquiatria', tema: 'saude_mental' },
       { id: '00OU5000008TSUAMA4', nome: 'Intern. Psiquiátricas por tempo de int.', tema: 'saude_mental' },
       { id: '00OU5000003Mh7sMAC', nome: 'Solicitações de tto ao TEA', tema: 'saude_mental' },
+      // Fase 3: exames (SP/SADT), prorrogações, OPME, quimio etc. — ~1 ano.
+      { id: '00O3r0000073WF2EAM', nome: 'Solicitações de autorização (exceto internação)', tema: 'autorizacoes' },
     ],
+    // Varredura semanal (Fase 3): todas as contas do relatório "Beneficiários
+    // sob gestão" → carteirinhas → TODAS as manifestações de cada uma (o
+    // histórico que os relatórios de 60 dias não mostram). De madrugada.
+    varredura: {
+      relatorioContas: '00O0Z000006yYhzUAE',
+      horaInicio: 1,
+      horaFim: 5,
+      // Nova varredura quando a última completa tiver mais de N dias.
+      intervaloDias: Number(process.env.GC_VARREDURA_DIAS ?? 6),
+      // Carteirinha conferida há menos de N dias é pulada (retomada).
+      revisitarDias: 6,
+      // Para antes disso e continua na próxima noite.
+      maxMinutos: Number(process.env.GC_VARREDURA_MAX_MIN ?? 230),
+    },
   },
   imap: {
     // O certificado TLS do servidor de e-mail é emitido para este nome — e não

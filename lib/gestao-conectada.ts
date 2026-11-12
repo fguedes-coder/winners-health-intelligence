@@ -32,6 +32,8 @@ export type InternacaoGC = {
   beneficiarioNome: string | null
   tipoBeneficiario: string | null
   empresa: string | null
+  /** Plano da carteirinha no portal (varredura semanal); null se ainda não lida. */
+  plano: string | null
   idade: number | null
   prestador: string | null
   medico: string | null
@@ -252,6 +254,8 @@ export async function getInternacoesGC(): Promise<{
   }
 
   // Negadas/canceladas não aconteceram: não recebem custo nem contam para reinternação.
+  const fichas = await carteirinhasGC(supabase, carteirinhas)
+
   const base = linhas
     .filter((l) => !['negada', 'cancelada'].includes(situacaoDe(l)))
     .map((l) => ({
@@ -281,7 +285,8 @@ export async function getInternacoesGC(): Promise<{
       carteirinha: l.carteirinha,
       beneficiarioNome: l.beneficiario_nome,
       tipoBeneficiario: cad?.tipo ?? null,
-      empresa: cad?.empresa ?? null,
+      empresa: cad?.empresa ?? (l.carteirinha ? fichas.get(l.carteirinha)?.codigoEmpresa : null) ?? null,
+      plano: l.carteirinha ? (fichas.get(l.carteirinha)?.plano ?? null) : null,
       idade: idadeEm(cad?.nascimento ?? null, l.data_internacao ?? hoje),
       prestador: l.prestador_nome,
       medico: l.medico_nome,
@@ -319,4 +324,238 @@ export async function getInternacoesGC(): Promise<{
   })
 
   return { disponivel: true, internacoes, saudeMentalOutras, ultimaColeta, hoje }
+}
+
+// ---------------------------------------------------------------------------
+// Fase 3 — autorizações (fora internação), fichas de carteirinha, histórico
+// ---------------------------------------------------------------------------
+
+export type CarteirinhaGC = {
+  carteirinha: string | null
+  plano: string | null
+  codigoEmpresa: string | null
+  nomeEmpresa: string | null
+  vigente: boolean | null
+  totalManifestacoes: string | null
+  verificadoEm: string
+}
+
+type LinhaCarteirinha = {
+  carteirinha: string | null
+  plano: string | null
+  codigo_empresa: string | null
+  nome_empresa: string | null
+  vigente: string | null
+  total_manifestacoes: string | null
+  verificado_em: string
+}
+
+const vigenteDe = (v: string | null) => (v == null ? null : /^(sim|true|verdadeiro|s)$/i.test(v.trim()))
+
+function paraCarteirinha(l: LinhaCarteirinha): CarteirinhaGC {
+  return {
+    carteirinha: l.carteirinha,
+    plano: l.plano,
+    codigoEmpresa: l.codigo_empresa,
+    nomeEmpresa: l.nome_empresa,
+    vigente: vigenteDe(l.vigente),
+    totalManifestacoes: l.total_manifestacoes,
+    verificadoEm: l.verificado_em,
+  }
+}
+
+/** Ficha do portal por carteirinha (16 dígitos); a vigente e mais recente vence. */
+async function carteirinhasGC(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  carteirinhas: string[],
+): Promise<Map<string, CarteirinhaGC>> {
+  const res = new Map<string, CarteirinhaGC>()
+  if (!carteirinhas.length) return res
+  const { data, error } = await supabase
+    .from('gc_beneficiarios')
+    .select('carteirinha, plano, codigo_empresa, nome_empresa, vigente, total_manifestacoes, verificado_em')
+    .in('carteirinha', carteirinhas)
+  if (error) return res // tabela ainda não criada: segue sem plano
+  for (const l of (data ?? []) as LinhaCarteirinha[]) {
+    if (!l.carteirinha) continue
+    const c = paraCarteirinha(l)
+    const atual = res.get(l.carteirinha)
+    if (!atual || (c.vigente && !atual.vigente) || (c.vigente === atual.vigente && c.verificadoEm > atual.verificadoEm)) {
+      res.set(l.carteirinha, c)
+    }
+  }
+  return res
+}
+
+export type AutorizacaoGC = {
+  numero: string
+  tipoRegistro: string | null
+  statusPortal: string | null
+  aberturaEm: string | null
+  fechamentoEm: string | null
+  carteirinha: string | null
+  beneficiarioNome: string | null
+  tipoBeneficiario: string | null
+  empresa: string | null
+  plano: string | null
+  prestador: string | null
+  medico: string | null
+  carater: string | null
+  indicacaoClinica: string | null
+  motivoNegativa: string | null
+  procedimentos: ItemLista[]
+  medicamentos: ItemLista[]
+  saudeMental: boolean
+}
+
+/** Situação resumida de uma autorização (texto do portal varia). */
+export function situacaoAutorizacao(status: string | null): 'autorizada' | 'negada' | 'cancelada' | 'em_analise' {
+  const s = status ?? ''
+  if (/negad/i.test(s)) return 'negada'
+  if (/cancel/i.test(s)) return 'cancelada'
+  if (/autoriz|liberad|aprovad/i.test(s)) return 'autorizada'
+  return 'em_analise'
+}
+
+const COLUNAS_AUTORIZACAO =
+  'numero, tipo_registro, status_portal, abertura_em, fechamento_em, carteirinha, beneficiario_nome, prestador_nome, medico_nome, carater, indicacao_clinica, hipotese_diagnostica, motivo_negativa, procedimentos, medicamentos, relatorios'
+
+type LinhaAutorizacao = {
+  numero: string
+  tipo_registro: string | null
+  status_portal: string | null
+  abertura_em: string | null
+  fechamento_em: string | null
+  carteirinha: string | null
+  beneficiario_nome: string | null
+  prestador_nome: string | null
+  medico_nome: string | null
+  carater: string | null
+  indicacao_clinica: string | null
+  hipotese_diagnostica: string | null
+  motivo_negativa: string | null
+  procedimentos: ItemLista[] | null
+  medicamentos: ItemLista[] | null
+  relatorios: string[] | null
+}
+
+/**
+ * Autorizações que NÃO são internação (exames SP/SADT, prorrogação, OPME,
+ * quimio/radio, terapias…), abertas a partir de `desde` ('AAAA-MM-DD').
+ */
+export async function getAutorizacoesGC(desde: string): Promise<AutorizacaoGC[]> {
+  const supabase = await createClient()
+  const { data, error } = await supabase
+    .from('gc_manifestacoes')
+    .select(COLUNAS_AUTORIZACAO)
+    .not('tipo_registro', 'ilike', 'interna%')
+    .gte('abertura_em', `${desde}T00:00:00-03:00`)
+    .order('abertura_em', { ascending: false })
+    .limit(3000)
+  if (error) return []
+  const linhas = (data ?? []) as LinhaAutorizacao[]
+  const carteirinhas = [...new Set(linhas.map((l) => l.carteirinha).filter((x): x is string => Boolean(x)))]
+
+  const [fichas, { data: vidas }] = await Promise.all([
+    carteirinhasGC(supabase, carteirinhas),
+    carteirinhas.length
+      ? supabase.from('beneficiario_vidas').select('carteirinha, tipo, empresa, competencia').in('carteirinha', carteirinhas)
+      : Promise.resolve({ data: [] as { carteirinha: string; tipo: string | null; empresa: string | null; competencia: string }[] }),
+  ])
+  const cad = new Map<string, { tipo: string | null; empresa: string | null; competencia: string }>()
+  for (const v of (vidas ?? []) as { carteirinha: string; tipo: string | null; empresa: string | null; competencia: string }[]) {
+    const a = cad.get(v.carteirinha)
+    if (!a || v.competencia > a.competencia) cad.set(v.carteirinha, v)
+  }
+
+  return linhas.map((l) => {
+    const f = l.carteirinha ? fichas.get(l.carteirinha) : undefined
+    const c = l.carteirinha ? cad.get(l.carteirinha) : undefined
+    return {
+      numero: l.numero,
+      tipoRegistro: l.tipo_registro,
+      statusPortal: l.status_portal,
+      aberturaEm: l.abertura_em,
+      fechamentoEm: l.fechamento_em,
+      carteirinha: l.carteirinha,
+      beneficiarioNome: l.beneficiario_nome,
+      tipoBeneficiario: c?.tipo ?? null,
+      empresa: c?.empresa ?? f?.codigoEmpresa ?? null,
+      plano: f?.plano ?? null,
+      prestador: l.prestador_nome,
+      medico: l.medico_nome,
+      carater: l.carater,
+      indicacaoClinica: l.indicacao_clinica,
+      motivoNegativa: l.motivo_negativa,
+      procedimentos: l.procedimentos ?? [],
+      medicamentos: l.medicamentos ?? [],
+      saudeMental: ehSaudeMentalGC({
+        relatorios: l.relatorios ?? [],
+        indicacaoClinica: l.indicacao_clinica,
+        hipoteseDiagnostica: l.hipotese_diagnostica,
+        procedimentos: l.procedimentos ?? [],
+      }),
+    }
+  })
+}
+
+export type EventoHistoricoGC = {
+  numero: string
+  tipoRegistro: string | null
+  statusPortal: string | null
+  aberturaEm: string | null
+  prestador: string | null
+  dataInternacao: string | null
+  dataAlta: string | null
+  carater: string | null
+  resumo: string
+}
+
+/** Linha do tempo de uma pessoa no portal: tudo o que passou por autorização. */
+export async function getHistoricoGC(carteirinha: string): Promise<{
+  disponivel: boolean
+  ficha: CarteirinhaGC | null
+  eventos: EventoHistoricoGC[]
+}> {
+  const supabase = await createClient()
+  const cart = carteirinha.replace(/\D/g, '').slice(0, 16)
+  const [{ data, error }, fichas] = await Promise.all([
+    supabase
+      .from('gc_manifestacoes')
+      .select('numero, tipo_registro, status_portal, abertura_em, prestador_nome, data_internacao, data_alta, carater, indicacao_clinica, procedimentos')
+      .eq('carteirinha', cart)
+      .order('abertura_em', { ascending: false })
+      .limit(500),
+    carteirinhasGC(supabase, [cart]),
+  ])
+  if (error) return { disponivel: false, ficha: null, eventos: [] }
+  const eventos = ((data ?? []) as {
+    numero: string
+    tipo_registro: string | null
+    status_portal: string | null
+    abertura_em: string | null
+    prestador_nome: string | null
+    data_internacao: string | null
+    data_alta: string | null
+    carater: string | null
+    indicacao_clinica: string | null
+    procedimentos: ItemLista[] | null
+  }[]).map((l) => {
+    const procs = (l.procedimentos ?? []).map((p) => p['Descrição'] ?? p['Descricao'] ?? '').filter(Boolean)
+    return {
+      numero: l.numero,
+      tipoRegistro: l.tipo_registro,
+      statusPortal: l.status_portal,
+      aberturaEm: l.abertura_em,
+      prestador: l.prestador_nome,
+      dataInternacao: l.data_internacao,
+      dataAlta: l.data_alta,
+      carater: l.carater,
+      resumo:
+        [procs.slice(0, 3).join('; ') + (procs.length > 3 ? '…' : ''), l.indicacao_clinica]
+          .filter(Boolean)
+          .join(' · ') || '—',
+    }
+  })
+  return { disponivel: true, ficha: fichas.get(cart) ?? null, eventos }
 }

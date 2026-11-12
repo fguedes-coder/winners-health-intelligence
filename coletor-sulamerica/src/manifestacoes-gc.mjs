@@ -133,3 +133,100 @@ export async function manifestacoesARevisitar(db) {
     .filter((l) => !/negad|cancel/i.test(l.status_portal ?? ''))
     .map((l) => l.case_id)
 }
+
+/**
+ * Manifestações já gravadas, encerradas no portal e lidas há menos de 3 dias:
+ * o ciclo de 6 h não precisa reabrir a ficha delas (só anota o relatório).
+ * Internação sem alta e o que ainda está em análise são sempre relidos.
+ */
+export async function casosParaPular(db) {
+  const desde = new Date(Date.now() - 3 * 86_400_000).toISOString()
+  const { data, error } = await db
+    .from('gc_manifestacoes')
+    .select('case_id, tipo_registro, status_portal, data_internacao, data_alta')
+    .gte('atualizado_em', desde)
+    .limit(5000)
+  if (error) throw new Error(`Falha ao ler as manifestações gravadas: ${error.message}`)
+  return new Set(
+    (data ?? [])
+      .filter((l) => /autoriz|negad|cancel|conclu|encerr|fechad/i.test(l.status_portal ?? ''))
+      .filter((l) => !(/interna/i.test(l.tipo_registro ?? '') && !l.data_alta && !/negad|cancel/i.test(l.status_portal ?? '')))
+      .map((l) => l.case_id),
+  )
+}
+
+/** Acrescenta os relatórios em que manifestações puladas apareceram. */
+export async function gravarOrigens(db, origens) {
+  const comNome = origens.filter((o) => o.relatorios.length)
+  if (!comNome.length) return
+  const { data, error } = await db
+    .from('gc_manifestacoes')
+    .select('numero, case_id, relatorios')
+    .in('case_id', comNome.map((o) => o.caseId))
+  if (error) throw new Error(`Falha ao ler as manifestações gravadas: ${error.message}`)
+  const porCaso = new Map((data ?? []).map((l) => [l.case_id, l]))
+  for (const o of comNome) {
+    const l = porCaso.get(o.caseId)
+    if (!l) continue
+    const juntos = [...new Set([...(l.relatorios ?? []), ...o.relatorios])].sort()
+    if (juntos.length === (l.relatorios ?? []).length) continue
+    const { error: e } = await db.from('gc_manifestacoes').update({ relatorios: juntos }).eq('numero', l.numero)
+    if (e) throw new Error(`Falha ao anotar relatórios: ${e.message}`)
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Varredura semanal — fichas das carteirinhas (gc_beneficiarios)
+// ---------------------------------------------------------------------------
+
+/** @param {import('./gestao-conectada.mjs').Carteirinha} c */
+export function linhaDaCarteirinha(c) {
+  const v = c.campos
+  const campos = Object.fromEntries(Object.entries(v).filter(([, x]) => texto(x)))
+  return {
+    beneficiario_id: c.id,
+    conta_id: c.conta,
+    carteirinha_sulamerica: String(v['Código de Identificação'] ?? '').replace(/\D/g, '') || null,
+    nome: texto(v['Nome/Razão Social']),
+    vigente: texto(v['Vigente']),
+    codigo_empresa: texto(v['Código da Empresa']),
+    nome_empresa: texto(v['Nome da Empresa']),
+    plano: texto(v['Plano']),
+    total_manifestacoes: c.totalManifestacoes,
+    casos: c.manifestacoes,
+    campos,
+    verificado_em: new Date().toISOString(),
+  }
+}
+
+export async function gravarCarteirinha(db, c) {
+  const { error } = await db.from('gc_beneficiarios').upsert(linhaDaCarteirinha(c), { onConflict: 'beneficiario_id' })
+  if (error) throw new Error(`Falha ao gravar a carteirinha: ${error.message}`)
+}
+
+/**
+ * O que a varredura pode pular: carteirinhas conferidas há menos de
+ * `revisitarDias`, contas cujas carteirinhas foram todas conferidas e
+ * manifestações já gravadas.
+ */
+export async function estadoVarredura(db, revisitarDias) {
+  const desde = new Date(Date.now() - revisitarDias * 86_400_000).toISOString()
+  const [{ data: bs, error: e1 }, { data: ms, error: e2 }] = await Promise.all([
+    db.from('gc_beneficiarios').select('beneficiario_id, conta_id, verificado_em').limit(10000),
+    db.from('gc_manifestacoes').select('case_id').limit(50000),
+  ])
+  if (e1) throw new Error(`Falha ao ler as carteirinhas: ${e1.message}`)
+  if (e2) throw new Error(`Falha ao ler as manifestações: ${e2.message}`)
+  const conferidas = new Set()
+  const contas = new Map()
+  for (const b of bs ?? []) {
+    const recente = b.verificado_em >= desde
+    if (recente) conferidas.add(b.beneficiario_id)
+    if (b.conta_id) contas.set(b.conta_id, (contas.get(b.conta_id) ?? true) && recente)
+  }
+  return {
+    conferidas,
+    contasConferidas: new Set([...contas].filter(([, ok]) => ok).map(([id]) => id)),
+    casosConhecidos: new Set((ms ?? []).map((m) => m.case_id)),
+  }
+}

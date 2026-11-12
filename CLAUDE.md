@@ -79,9 +79,14 @@ seção do relatório agora tem "Internações pagas no período" (explica o nú
 do resumo executivo, que é por mês de pagamento) + "que começaram no período";
 negadas/canceladas fora de custo e reinternação; reinternação compara com a
 última alta; no anonimizado, hospital com < 5 pessoas vai para "Demais".
-Próximo passo proposto (Fase 3, aguarda aprovação): varredura semanal das 191
-fichas de beneficiário (histórico > 1 ano), todas as autorizações (SADT, OPME,
-prorrogação, quimio) e filial/plano de cada vida.
+Fase 3 (PR feat/gestao-conectada-fase3): ciclo de 6 h lê também as
+autorizações fora internação (relatório de ~1 ano) e não reabre ficha
+encerrada lida há < 3 dias; varredura semanal de madrugada (1h–5h) percorre
+≈200 contas → carteirinhas (`gc_beneficiarios`: plano, código da empresa,
+vigente) → todas as manifestações, retomando de onde parou. App: cartão
+"Outras autorizações" em /internacoes, linha do tempo no Panorama do
+Beneficiário, plano no perfil, parte C (autorizações) na seção do relatório,
+status da varredura em Configurações → Robôs. Conferir a 1ª varredura.
 
 ## Ao final de uma sessão longa
 

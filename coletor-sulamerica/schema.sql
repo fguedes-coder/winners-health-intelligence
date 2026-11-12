@@ -215,3 +215,47 @@ create policy coletas_gestao_conectada_insert on public.coletas_gestao_conectada
 revoke all on public.coletas_gestao_conectada from anon, authenticated;
 grant select, insert on public.coletas_gestao_conectada to authenticated;
 grant all on public.coletas_gestao_conectada to service_role;
+
+-- ---------------------------------------------------------------------------
+-- Fase 3 (Gestão Conectada): varredura semanal das fichas de carteirinha
+-- ---------------------------------------------------------------------------
+
+-- Tipo da atualização: 'rapida' (a cada 6 h) ou 'varredura' (semanal, de madrugada).
+alter table public.coletas_gestao_conectada
+  add column if not exists tipo text not null default 'rapida',
+  add column if not exists beneficiarios integer;
+alter table public.coletas_gestao_conectada drop constraint if exists coletas_gestao_conectada_tipo_check;
+alter table public.coletas_gestao_conectada
+  add constraint coletas_gestao_conectada_tipo_check check (tipo in ('rapida', 'varredura'));
+-- O app só pede a atualização rápida; a varredura é do robô.
+drop policy if exists coletas_gestao_conectada_insert on public.coletas_gestao_conectada;
+create policy coletas_gestao_conectada_insert on public.coletas_gestao_conectada for insert to authenticated
+  with check (status = 'pendente' and origem = 'manual' and tipo = 'rapida');
+
+-- Ficha de cada carteirinha no portal (uma pessoa pode ter várias: plano
+-- anterior, dependente que virou titular…). Nunca apagada.
+create table if not exists public.gc_beneficiarios (
+  beneficiario_id text primary key,          -- a22… (Salesforce)
+  conta_id text,                             -- 001… (a pessoa)
+  carteirinha_sulamerica text,               -- 17 dígitos
+  carteirinha text generated always as (left(carteirinha_sulamerica, 16)) stored,
+  nome text,
+  vigente text,
+  codigo_empresa text,
+  nome_empresa text,
+  plano text,
+  total_manifestacoes text,                  -- como o portal mostra: "3", "6+"
+  casos text[] not null default '{}',        -- IDs das manifestações (500…)
+  campos jsonb not null default '{}'::jsonb,
+  primeira_coleta_em timestamptz not null default now(),
+  verificado_em timestamptz not null default now()
+);
+create index if not exists gc_beneficiarios_carteirinha on public.gc_beneficiarios (carteirinha);
+create index if not exists gc_beneficiarios_conta on public.gc_beneficiarios (conta_id);
+
+alter table public.gc_beneficiarios enable row level security;
+drop policy if exists gc_beneficiarios_select on public.gc_beneficiarios;
+create policy gc_beneficiarios_select on public.gc_beneficiarios for select to authenticated using (true);
+revoke all on public.gc_beneficiarios from anon, authenticated;
+grant select on public.gc_beneficiarios to authenticated;
+grant all on public.gc_beneficiarios to service_role;

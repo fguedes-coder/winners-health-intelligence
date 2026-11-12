@@ -1535,11 +1535,45 @@ class Relatorio {
     }
     if (!this.anonimizado && r.casos.length > 0) tabelaCasos(r.casos, 'Custo pago', 'a pagar')
 
+    // ---- C. Autorizações fora internação (Fase 3) --------------------------
+    const a = r.autorizacoes
+    if (a && a.total > 0) {
+      this.subTitle('Autorizações no período — exames, terapias e procedimentos')
+      this.kpis([
+        { label: 'Pedidos de autorização', valor: a.total.toLocaleString('pt-BR'), destaque: true },
+        { label: 'Pessoas', valor: a.pessoas },
+        { label: 'Negados', valor: a.negadas.toLocaleString('pt-BR'), destaque: a.negadas > 0 },
+        { label: 'Em análise', valor: a.emAnalise.toLocaleString('pt-BR') },
+      ])
+      this.table(
+        [
+          { header: 'Tipo de autorização', width: USABLE_W - 240 },
+          { header: 'Pedidos', width: 70, align: 'right' },
+          { header: 'Pessoas', width: 100, align: 'right' },
+          { header: 'Negados', width: 70, align: 'right' },
+        ],
+        a.porTipo.map((t) => [t.tipo, String(t.total), t.pessoas, t.negadas ? String(t.negadas) : '—']),
+      )
+      if (!this.anonimizado && a.casos.length > 0) {
+        this.table(
+          [
+            { header: 'Beneficiário', width: 118 },
+            { header: 'Data', width: 58 },
+            { header: 'Tipo', width: 92 },
+            { header: 'Situação', width: 62 },
+            { header: 'Prestador e procedimentos', width: USABLE_W - 330 },
+          ],
+          a.casos.map((c) => [c.beneficiario, c.data, c.tipo, c.situacao, `${c.prestador}
+${c.procedimentos}`]),
+        )
+      }
+    }
+
     if (this.anonimizado) {
       this.nota(
         'Por se tratar de dado de saúde sensível, esta seção apresenta apenas indicadores agregados, sem identificação individual — nem por pseudônimo. Hospitais com menos de 5 pessoas no período aparecem agrupados.',
       )
-    } else if (r.casos.length > 0 || p.casos.length > 0) {
+    } else if (r.casos.length > 0 || p.casos.length > 0 || (r.autorizacoes?.casos.length ?? 0) > 0) {
       this.nota(
         'Uso interno — dado de saúde sensível (LGPD, art. 11). Esta versão identificada não deve ser enviada à empresa contratante; para ela, use o relatório anonimizado.',
       )
