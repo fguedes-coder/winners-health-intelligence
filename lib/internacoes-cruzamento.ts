@@ -34,6 +34,8 @@ export type CustoInternacao = {
   lancamentos: number
   /** Competências (mês de pagamento) em que as contas apareceram. */
   competencias: string[]
+  /** Valor pago em cada competência (mês de pagamento). */
+  porCompetencia: Record<string, number>
 }
 
 /** Custo pago (TXT) de cada internação do Gestão Conectada, por número da manifestação. */
@@ -62,6 +64,7 @@ export function custoPorInternacao(
     let valor = 0
     let n = 0
     const comps = new Set<string>()
+    const porComp: Record<string, number> = {}
     for (const l of porPessoa.get(i.carteirinha!) ?? []) {
       if (usados.has(l)) continue
       const d = dia(l.dataAtendimento!)
@@ -69,9 +72,13 @@ export function custoPorInternacao(
       usados.add(l)
       valor += l.valorPago
       n++
-      if (l.competencia) comps.add(l.competencia)
+      if (l.competencia) {
+        comps.add(l.competencia)
+        porComp[l.competencia] = (porComp[l.competencia] ?? 0) + l.valorPago
+      }
     }
-    if (n > 0) res.set(i.numero, { valorPago: valor, lancamentos: n, competencias: [...comps].sort() })
+    if (n > 0)
+      res.set(i.numero, { valorPago: valor, lancamentos: n, competencias: [...comps].sort(), porCompetencia: porComp })
   }
   return res
 }
@@ -83,7 +90,12 @@ export type Reinternacao = {
   diasDesdeAlta: number
 }
 
-/** Reinternações: mesma carteirinha, nova internação até 30 dias após a alta anterior. */
+/**
+ * Reinternações: mesma carteirinha, nova internação até 30 dias após a alta
+ * anterior. Compara com a ÚLTIMA alta já ocorrida (não só com o registro
+ * imediatamente anterior, que pode não ter alta). Quem chama deve passar só
+ * internações válidas — sem negadas/canceladas.
+ */
 export function reinternacoes(internacoes: InternacaoBase[]): Map<string, Reinternacao> {
   const porPessoa = new Map<string, InternacaoBase[]>()
   for (const i of internacoes) {
@@ -95,14 +107,15 @@ export function reinternacoes(internacoes: InternacaoBase[]): Map<string, Reinte
   const res = new Map<string, Reinternacao>()
   for (const lista of porPessoa.values()) {
     lista.sort((a, b) => (a.dataInternacao ?? '').localeCompare(b.dataInternacao ?? ''))
-    for (let k = 1; k < lista.length; k++) {
-      const ant = lista[k - 1]
-      const atual = lista[k]
-      if (!ant.dataAlta) continue
-      const dias = dia(atual.dataInternacao!) - dia(ant.dataAlta)
-      if (dias >= 0 && dias <= REINTERNACAO_DIAS) {
-        res.set(atual.numero, { numero: atual.numero, anterior: ant.numero, diasDesdeAlta: dias })
+    let ultima: InternacaoBase | null = null
+    for (const atual of lista) {
+      if (ultima?.dataAlta) {
+        const dias = dia(atual.dataInternacao!) - dia(ultima.dataAlta)
+        if (dias >= 0 && dias <= REINTERNACAO_DIAS) {
+          res.set(atual.numero, { numero: atual.numero, anterior: ultima.numero, diasDesdeAlta: dias })
+        }
       }
+      if (atual.dataAlta && (!ultima?.dataAlta || atual.dataAlta > ultima.dataAlta)) ultima = atual
     }
   }
   return res

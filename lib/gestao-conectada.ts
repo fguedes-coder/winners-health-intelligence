@@ -58,6 +58,8 @@ export type InternacaoGC = {
   custoPago: number | null
   lancamentosPagos: number
   competenciasPagamento: string[]
+  /** Valor pago por competência (mês de pagamento do TXT). */
+  custoPorCompetencia: Record<string, number>
   /** Nova internação até 30 dias após a alta anterior da mesma pessoa. */
   reinternacao: { anterior: string; diasDesdeAlta: number } | null
 }
@@ -249,7 +251,10 @@ export async function getInternacoesGC(): Promise<{
     }
   }
 
-  const base = linhas.map((l) => ({
+  // Negadas/canceladas não aconteceram: não recebem custo nem contam para reinternação.
+  const base = linhas
+    .filter((l) => !['negada', 'cancelada'].includes(situacaoDe(l)))
+    .map((l) => ({
     numero: l.numero,
     carteirinha: l.carteirinha,
     dataInternacao: l.data_internacao,
@@ -306,6 +311,7 @@ export async function getInternacoesGC(): Promise<{
       custoPago: custos.get(l.numero)?.valorPago ?? null,
       lancamentosPagos: custos.get(l.numero)?.lancamentos ?? 0,
       competenciasPagamento: custos.get(l.numero)?.competencias ?? [],
+      custoPorCompetencia: custos.get(l.numero)?.porCompetencia ?? {},
       reinternacao: reint.get(l.numero)
         ? { anterior: reint.get(l.numero)!.anterior, diasDesdeAlta: reint.get(l.numero)!.diasDesdeAlta }
         : null,

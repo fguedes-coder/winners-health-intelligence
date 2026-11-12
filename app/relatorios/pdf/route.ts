@@ -271,6 +271,7 @@ export async function GET(request: NextRequest) {
             competenciaInicio,
             competenciaFim,
             anonimizado: modo === 'anonimizado',
+            pessoasTXT: data.kpis.internacoes,
           })
         : null,
     analiseIA,
