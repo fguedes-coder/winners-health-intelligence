@@ -11,6 +11,7 @@ import {
   FileText,
   HeartPulse,
   LayoutDashboard,
+  MessageSquareText,
   Radar,
   Settings,
   ShieldCheck,
@@ -28,6 +29,7 @@ const navItems: {
   badge?: string
 }[] = [
   { label: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
+  { label: 'Converse com a Winners', href: '/converse', icon: MessageSquareText, badge: 'IA' },
   { label: 'Clientes', href: '/clientes', icon: Users },
   { label: 'Apólices', href: '/apolices', icon: ShieldCheck },
   { label: 'Sinistralidade', href: '/sinistralidade', icon: Activity },
