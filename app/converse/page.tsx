@@ -1,4 +1,5 @@
 import { DashboardShell } from '@/components/dashboard-shell'
+import { getStatusChaveAssistente } from '@/lib/assistente/chave'
 import { ConverseClient } from './converse-client'
 
 export const metadata = {
@@ -8,8 +9,8 @@ export const metadata = {
 
 export const dynamic = 'force-dynamic'
 
-export default function ConversePage() {
-  const configurada = Boolean(process.env.ANTHROPIC_API_KEY?.trim())
+export default async function ConversePage() {
+  const configurada = (await getStatusChaveAssistente()).origem !== null
   return (
     <DashboardShell title="Converse com a Winners">
       <ConverseClient configurada={configurada} />

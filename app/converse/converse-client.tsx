@@ -83,8 +83,11 @@ export function ConverseClient({ configurada }: { configurada: boolean }) {
     <div className="mx-auto flex h-[calc(100dvh-9rem)] w-full max-w-4xl flex-col gap-4">
       {!configurada && (
         <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm">
-          Falta cadastrar a chave da API do Claude no servidor (variável <code>ANTHROPIC_API_KEY</code> no Coolify).
-          Depois de cadastrar e reiniciar o app, o chat passa a responder.
+          Falta cadastrar a chave da API do Claude. Cole a chave em{' '}
+          <a href="/configuracoes?aba=ia" className="font-medium underline underline-offset-2">
+            Configurações → Inteligência artificial
+          </a>{' '}
+          e volte aqui.
         </div>
       )}
 
