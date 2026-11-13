@@ -22,6 +22,8 @@ export type SituacaoInternacao =
   | 'cancelada'
   /** Internação antiga sem alta lançada no portal (comum em day hospital). */
   | 'sem_alta'
+  /** Pedido antigo sem data de internação: a data prevista passou e o portal não o mostra mais. */
+  | 'sem_registro'
 
 export type ItemLista = Record<string, string>
 
@@ -110,12 +112,16 @@ function idadeEm(nascimento: string | null, ref: string): number | null {
 const VISTO_RECENTE_MS = 30 * 3_600_000
 /** Sem alta e sem aparecer nos relatórios: ainda internado só dentro das diárias + folga. */
 const FOLGA_DIARIAS = 2
+/** Pedido sem internação: "em andamento" até N dias depois da data prevista. */
+const PEDIDO_EM_ABERTO_DIAS = 7
 
 function situacaoDe(
   l: {
     status_portal: string | null
     data_internacao: string | null
     data_alta: string | null
+    data_prevista?: string | null
+    abertura_em?: string | null
     diarias_autorizadas?: number | null
     visto_em_relatorio_em?: string | null
   },
@@ -125,14 +131,20 @@ function situacaoDe(
   if (/negad/i.test(st)) return 'negada'
   if (/cancel/i.test(st)) return 'cancelada'
   if (l.data_alta) return 'alta'
+  // Evidência atual: apareceu nos relatórios do portal na leitura recente.
+  const visto = l.visto_em_relatorio_em ? Date.now() - Date.parse(l.visto_em_relatorio_em) <= VISTO_RECENTE_MS : false
   if (l.data_internacao) {
-    // "Internado agora" só com evidência atual: apareceu nos relatórios do
-    // portal na leitura recente, ou ainda está dentro das diárias autorizadas.
-    // Sem isso é internação antiga cuja alta o hospital nunca lançou.
-    const visto = l.visto_em_relatorio_em ? Date.now() - Date.parse(l.visto_em_relatorio_em) <= VISTO_RECENTE_MS : false
+    // "Internado agora" só se foi visto há pouco ou ainda está dentro das
+    // diárias autorizadas. Sem isso é internação antiga cuja alta o hospital
+    // nunca lançou.
     const dentroDasDiarias = diasEntre(l.data_internacao, hoje) <= Math.max(l.diarias_autorizadas ?? 1, 1) + FOLGA_DIARIAS
     return visto || dentroDasDiarias ? 'internado' : 'sem_alta'
   }
+  // Pedido sem internação: "em andamento" só se o portal ainda o mostra ou se
+  // a data prevista é recente. Pedido antigo autorizado e nunca internado
+  // (ou que veio do histórico da varredura) não está em andamento.
+  const ref = l.data_prevista ?? l.abertura_em?.slice(0, 10) ?? null
+  if (!visto && ref && diasEntre(ref, hoje) > PEDIDO_EM_ABERTO_DIAS) return 'sem_registro'
   if (/autoriz/i.test(st)) return 'aguardando'
   return 'em_analise'
 }

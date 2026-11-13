@@ -93,6 +93,7 @@ const SITUACAO: Record<SituacaoInternacao, string> = {
   negada: 'Negada',
   cancelada: 'Cancelada',
   sem_alta: 'Sem alta registrada',
+  sem_registro: 'Sem internação registrada',
 }
 
 const dataBR = (iso: string | null) => (iso ? `${iso.slice(8, 10)}/${iso.slice(5, 7)}/${iso.slice(0, 4)}` : '—')

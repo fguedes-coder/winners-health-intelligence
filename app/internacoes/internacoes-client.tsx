@@ -31,6 +31,7 @@ const SITUACAO: Record<SituacaoInternacao, { rotulo: string; variant: 'default' 
   negada: { rotulo: 'Negada', variant: 'destructive' },
   cancelada: { rotulo: 'Cancelada', variant: 'neutral' },
   sem_alta: { rotulo: 'Sem alta registrada', variant: 'neutral' },
+  sem_registro: { rotulo: 'Sem internação registrada', variant: 'neutral' },
 }
 
 const FILTROS: { id: 'todas' | SituacaoInternacao; rotulo: string }[] = [
@@ -41,6 +42,7 @@ const FILTROS: { id: 'todas' | SituacaoInternacao; rotulo: string }[] = [
   { id: 'aguardando', rotulo: 'Aguardando' },
   { id: 'negada', rotulo: 'Negadas' },
   { id: 'sem_alta', rotulo: 'Sem alta registrada' },
+  { id: 'sem_registro', rotulo: 'Sem internação registrada' },
 ]
 
 const MESES = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez']
