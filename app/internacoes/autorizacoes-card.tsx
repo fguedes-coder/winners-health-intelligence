@@ -8,6 +8,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { beneficiarioLabel, type BenefDisplay } from '@/lib/display-prefs'
 import type { AutorizacaoGC } from '@/lib/gestao-conectada'
+import { DocumentosGC } from '@/components/documentos-gc'
 
 // Autorizações fora internação (exames SP/SADT, prorrogações, OPME, quimio,
 // terapias…). Mostram o que cada pessoa está fazendo ANTES da conta chegar.
@@ -188,7 +189,18 @@ export function AutorizacoesCard({
                         </TableCell>
                         <TableCell className="tabular-nums">{data(a.aberturaEm)}</TableCell>
                         <TableCell className="max-w-48 truncate">{a.prestador ?? '—'}</TableCell>
-                        <TableCell className="max-w-80 whitespace-normal text-xs">{procedimentos(a)}</TableCell>
+                        <TableCell className="max-w-80 whitespace-normal text-xs">
+                          {procedimentos(a)}
+                          {a.motivoMedico && <div className="mt-1 text-muted-foreground">{a.motivoMedico}</div>}
+                          {a.documentos.length > 0 && (
+                            <details className="mt-1">
+                              <summary className="cursor-pointer text-primary">Ver documentos ({a.documentos.length})</summary>
+                              <div className="mt-2 min-w-72">
+                                <DocumentosGC documentos={a.documentos} compacto />
+                              </div>
+                            </details>
+                          )}
+                        </TableCell>
                       </TableRow>
                     )
                   })}

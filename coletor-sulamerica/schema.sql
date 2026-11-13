@@ -267,3 +267,69 @@ grant all on public.gc_beneficiarios to service_role;
 alter table public.gc_manifestacoes add column if not exists visto_em_relatorio_em timestamptz;
 update public.gc_manifestacoes set visto_em_relatorio_em = atualizado_em
   where visto_em_relatorio_em is null and relatorios <> '{}';
+
+-- ---------------------------------------------------------------------------
+-- Fase 4 — anexos das manifestações (pedido médico, aviso de internação,
+-- relatório médico, laudo, receita, orçamento de OPME…)
+--
+-- O robô abre o visualizador do portal, baixa cada arquivo SÓ EM MEMÓRIA e o
+-- Claude lê o documento (muitos são escaneados ou manuscritos). Guarda-se a
+-- leitura (CID, diagnóstico, resumo, transcrição), NUNCA o arquivo. É o dado
+-- mais sensível do sistema (LGPD art. 11): só o app interno (Fernando e o
+-- médico) lê; não entra em relatório para a empresa, nem no nominal.
+-- ---------------------------------------------------------------------------
+
+alter table public.gc_manifestacoes add column if not exists anexos_lidos_em timestamptz;
+alter table public.gc_manifestacoes add column if not exists anexos integer;
+
+create table if not exists public.gc_documentos (
+  id bigint generated always as identity primary key,
+  case_id text not null references public.gc_manifestacoes (case_id) on delete cascade,
+  numero text not null,
+  -- Nome do arquivo no bucket do portal (ex.: 134226437.pdf).
+  arquivo text not null,
+  ordem integer,
+  descricao text,
+  recebido_em timestamptz,
+  formato text,
+  tamanho integer,
+  hash text,
+  tipo_documento text,
+  data_documento date,
+  medico text,
+  estabelecimento text,
+  cids jsonb not null default '[]'::jsonb,
+  diagnostico text,
+  quadro_clinico text,
+  conduta text,
+  leito text,
+  carater text,
+  diarias_previstas integer,
+  procedimentos jsonb not null default '[]'::jsonb,
+  materiais jsonb not null default '[]'::jsonb,
+  medicamentos jsonb not null default '[]'::jsonb,
+  exames jsonb not null default '[]'::jsonb,
+  resumo text,
+  transcricao text,
+  legibilidade text,
+  observacoes text,
+  -- Leitura não feita (formato não suportado, recusa, erro): fica registrado
+  -- para não tentar de novo a cada ciclo.
+  erro text,
+  modelo text,
+  analisado_em timestamptz not null default now(),
+  unique (case_id, arquivo)
+);
+create index if not exists gc_documentos_numero on public.gc_documentos (numero);
+create index if not exists gc_documentos_hash on public.gc_documentos (hash);
+
+alter table public.gc_documentos enable row level security;
+drop policy if exists gc_documentos_select on public.gc_documentos;
+create policy gc_documentos_select on public.gc_documentos for select to authenticated using (true);
+revoke all on public.gc_documentos from anon, authenticated;
+grant select on public.gc_documentos to authenticated;
+grant all on public.gc_documentos to service_role;
+
+-- O robô usa a mesma chave do Claude do "Converse com a Winners"
+-- (supabase/assistente.sql), lida pela service_role.
+grant execute on function public.chave_assistente() to service_role;

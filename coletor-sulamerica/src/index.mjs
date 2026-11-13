@@ -16,6 +16,7 @@ import { carregarCredenciais, carregarCredenciaisGC } from './credenciais.mjs'
 import { buscarValorFatura } from './portal-corretor.mjs'
 import { associarFatura } from './fatura.mjs'
 import { coletarGestaoConectada, varrerBeneficiarios } from './gestao-conectada.mjs'
+import { lerAnexos } from './anexos.mjs'
 import {
   casosParaPular,
   estadoVarredura,
@@ -319,6 +320,12 @@ async function processarGC() {
       concluido_em: new Date().toISOString(),
     }).eq('id', coleta.id)
     log(`  Gestão Conectada ok: ${fim.resumo}`)
+    // Fase 4: anexos (pedido médico, laudo, receita…) lidos pelo Claude.
+    try {
+      await lerAnexos(db, credenciais, (m) => log(`  ${m}`))
+    } catch (e) {
+      log(`  anexos não lidos: ${String(e?.message ?? e).replace(/\s+/g, ' ').slice(0, 200)}`)
+    }
   } catch (e) {
     const mensagem = String(e?.message ?? e).replace(/\s+/g, ' ').slice(0, 300)
     await db.from('coletas_gestao_conectada').update({

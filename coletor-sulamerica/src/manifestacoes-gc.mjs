@@ -239,3 +239,120 @@ export async function estadoVarredura(db, revisitarDias) {
     casosConhecidos: new Set((ms ?? []).map((m) => m.case_id)),
   }
 }
+
+// ---------------------------------------------------------------------------
+// Fase 4 — anexos lidos pelo Claude (gc_documentos)
+// ---------------------------------------------------------------------------
+
+const dataBRCurta = (iso) => (iso ? new Date(iso).toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' }) : '')
+
+/**
+ * Manifestações cujos anexos ainda não foram lidos (mais recentes primeiro) e
+ * internações abertas lidas há mais de `reabrirHoras` (o hospital anexa
+ * relatório, prorrogação etc. depois).
+ * @returns {Promise<{ case_id: string, numero: string, contexto: string }[]>}
+ */
+export async function casosParaAnexos(db, { porCiclo, reabrirHoras }) {
+  const colunas = 'case_id, numero, tipo_registro, prestador_nome, abertura_em, status_portal'
+  const corte = new Date(Date.now() - reabrirHoras * 3_600_000).toISOString()
+  const desde = new Date(Date.now() - 60 * 86_400_000).toISOString()
+  const [novos, abertas] = await Promise.all([
+    db.from('gc_manifestacoes').select(colunas).is('anexos_lidos_em', null).order('abertura_em', { ascending: false }).limit(porCiclo),
+    db
+      .from('gc_manifestacoes')
+      .select(colunas)
+      .ilike('tipo_registro', 'interna%')
+      .is('data_alta', null)
+      .gte('abertura_em', desde)
+      .lt('anexos_lidos_em', corte)
+      .limit(20),
+  ])
+  if (novos.error) throw new Error(`Falha ao ler as manifestações sem anexos lidos: ${novos.error.message}`)
+  const vistos = new Set()
+  const res = []
+  for (const l of [...(abertas.data ?? []).filter((x) => !/negad|cancel/i.test(x.status_portal ?? '')), ...(novos.data ?? [])]) {
+    if (vistos.has(l.case_id)) continue
+    vistos.add(l.case_id)
+    res.push({
+      case_id: l.case_id,
+      numero: l.numero,
+      contexto: [l.tipo_registro, l.prestador_nome, l.abertura_em ? `aberta em ${dataBRCurta(l.abertura_em)}` : null].filter(Boolean).join(' — '),
+    })
+  }
+  return res
+}
+
+/** Anexos já gravados de cada manifestação (para não baixar de novo). */
+export async function documentosConhecidos(db, caseIds) {
+  const mapa = new Map()
+  if (!caseIds.length) return mapa
+  const { data, error } = await db.from('gc_documentos').select('case_id, arquivo').in('case_id', caseIds)
+  if (error) throw new Error(`Falha ao ler os anexos gravados: ${error.message}`)
+  for (const d of data ?? []) {
+    if (!mapa.has(d.case_id)) mapa.set(d.case_id, new Set())
+    mapa.get(d.case_id).add(d.arquivo)
+  }
+  return mapa
+}
+
+const CAMPOS_LEITURA = [
+  'tipo_documento', 'data_documento', 'medico', 'estabelecimento', 'cids', 'diagnostico', 'quadro_clinico',
+  'conduta', 'leito', 'carater', 'diarias_previstas', 'procedimentos', 'materiais', 'medicamentos', 'exames',
+  'resumo', 'transcricao', 'legibilidade', 'observacoes', 'erro', 'modelo',
+]
+
+/** Leitura já feita de um arquivo idêntico (o portal às vezes anexa o mesmo PDF duas vezes). */
+export async function leituraPorHash(db, hash) {
+  const { data } = await db
+    .from('gc_documentos')
+    .select(CAMPOS_LEITURA.join(', '))
+    .eq('hash', hash)
+    .is('erro', null)
+    .limit(1)
+  return data?.[0] ?? null
+}
+
+/** Resultado do analisador → colunas de gc_documentos. */
+export function colunasDaLeitura({ dados, erro, modelo }) {
+  const d = dados ?? {}
+  const lista = (v) => (Array.isArray(v) ? v : [])
+  const data = /^\d{4}-\d{2}-\d{2}$/.test(String(d.data_documento ?? '')) ? d.data_documento : null
+  return {
+    tipo_documento: d.tipo_documento ?? null,
+    data_documento: data,
+    medico: texto(d.medico),
+    estabelecimento: texto(d.estabelecimento),
+    cids: lista(d.cids),
+    diagnostico: texto(d.diagnostico),
+    quadro_clinico: texto(d.quadro_clinico),
+    conduta: texto(d.conduta),
+    leito: texto(d.leito),
+    carater: texto(d.carater),
+    diarias_previstas: Number.isInteger(d.diarias_previstas) ? d.diarias_previstas : null,
+    procedimentos: lista(d.procedimentos),
+    materiais: lista(d.materiais),
+    medicamentos: lista(d.medicamentos),
+    exames: lista(d.exames),
+    resumo: texto(d.resumo),
+    transcricao: texto(d.transcricao),
+    legibilidade: d.legibilidade ?? null,
+    observacoes: texto(d.observacoes),
+    erro: erro ?? null,
+    modelo: modelo ?? null,
+  }
+}
+
+export async function gravarDocumento(db, linha) {
+  const { error } = await db
+    .from('gc_documentos')
+    .upsert({ ...linha, analisado_em: new Date().toISOString() }, { onConflict: 'case_id,arquivo' })
+  if (error) throw new Error(`Falha ao gravar o anexo: ${error.message}`)
+}
+
+export async function marcarAnexosLidos(db, caseId, quantos) {
+  const { error } = await db
+    .from('gc_manifestacoes')
+    .update({ anexos_lidos_em: new Date().toISOString(), anexos: quantos })
+    .eq('case_id', caseId)
+  if (error) throw new Error(`Falha ao marcar os anexos lidos: ${error.message}`)
+}

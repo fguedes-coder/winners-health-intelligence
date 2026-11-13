@@ -27,6 +27,38 @@ export type SituacaoInternacao =
 
 export type ItemLista = Record<string, string>
 
+/**
+ * Anexo da manifestação (pedido médico, aviso de internação, laudo, receita,
+ * orçamento de OPME…) lido pelo Claude no robô (tabela gc_documentos).
+ * Dado clínico mais sensível do sistema: só telas internas e o chat — nunca
+ * relatório para a empresa.
+ */
+export type DocumentoGC = {
+  arquivo: string
+  descricao: string | null
+  recebidoEm: string | null
+  tipoDocumento: string | null
+  dataDocumento: string | null
+  medico: string | null
+  estabelecimento: string | null
+  cids: { codigo: string; descricao: string | null }[]
+  diagnostico: string | null
+  quadroClinico: string | null
+  conduta: string | null
+  leito: string | null
+  carater: string | null
+  diariasPrevistas: number | null
+  procedimentos: { codigo: string | null; descricao: string; quantidade: number | null }[]
+  materiais: { descricao: string; quantidade: number | null }[]
+  medicamentos: { nome: string; dose: string | null; posologia: string | null }[]
+  exames: { exame: string; resultado: string }[]
+  resumo: string | null
+  transcricao: string | null
+  legibilidade: string | null
+  observacoes: string | null
+  erro: string | null
+}
+
 export type InternacaoGC = {
   numero: string
   situacao: SituacaoInternacao
@@ -68,6 +100,10 @@ export type InternacaoGC = {
   custoPorCompetencia: Record<string, number>
   /** Nova internação até 30 dias após a alta anterior da mesma pessoa. */
   reinternacao: { anterior: string; diasDesdeAlta: number } | null
+  /** Anexos lidos pelo Claude (relatório médico, laudo…). */
+  documentos: DocumentoGC[]
+  /** Motivo segundo os anexos: CID + diagnóstico (null se não houver anexo lido). */
+  motivoMedico: string | null
 }
 
 /** Solicitação de saúde mental que não é internação (ex.: tratamento de TEA). */
@@ -178,6 +214,96 @@ type Linha = {
   visto_em_relatorio_em: string | null
 }
 
+type Supabase = Awaited<ReturnType<typeof createClient>>
+
+const COLUNAS_DOCUMENTO =
+  'numero, arquivo, ordem, descricao, recebido_em, tipo_documento, data_documento, medico, estabelecimento, cids, diagnostico, quadro_clinico, conduta, leito, carater, diarias_previstas, procedimentos, materiais, medicamentos, exames, resumo, transcricao, legibilidade, observacoes, erro'
+
+type LinhaDocumento = {
+  numero: string
+  arquivo: string
+  ordem: number | null
+  descricao: string | null
+  recebido_em: string | null
+  tipo_documento: string | null
+  data_documento: string | null
+  medico: string | null
+  estabelecimento: string | null
+  cids: DocumentoGC['cids'] | null
+  diagnostico: string | null
+  quadro_clinico: string | null
+  conduta: string | null
+  leito: string | null
+  carater: string | null
+  diarias_previstas: number | null
+  procedimentos: DocumentoGC['procedimentos'] | null
+  materiais: DocumentoGC['materiais'] | null
+  medicamentos: DocumentoGC['medicamentos'] | null
+  exames: DocumentoGC['exames'] | null
+  resumo: string | null
+  transcricao: string | null
+  legibilidade: string | null
+  observacoes: string | null
+  erro: string | null
+}
+
+/**
+ * Anexos lidos pelo Claude, por número de manifestação (na ordem do portal).
+ * Arquivos repetidos (mesma leitura) aparecem uma vez só. Sem a tabela
+ * (antes da Fase 4) devolve vazio.
+ */
+export async function documentosPorNumero(supabase: Supabase, numeros: string[]): Promise<Map<string, DocumentoGC[]>> {
+  const res = new Map<string, DocumentoGC[]>()
+  for (let i = 0; i < numeros.length; i += 300) {
+    const { data, error } = await supabase
+      .from('gc_documentos')
+      .select(COLUNAS_DOCUMENTO)
+      .in('numero', numeros.slice(i, i + 300))
+      .order('ordem', { ascending: true })
+    if (error) return res
+    for (const d of (data ?? []) as LinhaDocumento[]) {
+      const lista = res.get(d.numero) ?? []
+      // O portal às vezes anexa o mesmo arquivo duas vezes.
+      if (d.transcricao && lista.some((x) => x.transcricao === d.transcricao)) continue
+      lista.push({
+        arquivo: d.arquivo,
+        descricao: d.descricao,
+        recebidoEm: d.recebido_em,
+        tipoDocumento: d.tipo_documento,
+        dataDocumento: d.data_documento,
+        medico: d.medico,
+        estabelecimento: d.estabelecimento,
+        cids: d.cids ?? [],
+        diagnostico: d.diagnostico,
+        quadroClinico: d.quadro_clinico,
+        conduta: d.conduta,
+        leito: d.leito,
+        carater: d.carater,
+        diariasPrevistas: d.diarias_previstas,
+        procedimentos: d.procedimentos ?? [],
+        materiais: d.materiais ?? [],
+        medicamentos: d.medicamentos ?? [],
+        exames: d.exames ?? [],
+        resumo: d.resumo,
+        transcricao: d.transcricao,
+        legibilidade: d.legibilidade,
+        observacoes: d.observacoes,
+        erro: d.erro,
+      })
+      res.set(d.numero, lista)
+    }
+  }
+  return res
+}
+
+/** "R50.9 — Febre refratária…" a partir do primeiro anexo com diagnóstico. */
+export function motivoDosDocumentos(docs: DocumentoGC[]): string | null {
+  const d = docs.find((x) => x.diagnostico || x.cids.length)
+  if (!d) return null
+  const cids = d.cids.map((c) => c.codigo).filter(Boolean).join(', ')
+  return [cids, d.diagnostico].filter(Boolean).join(' — ') || null
+}
+
 /**
  * Internações do Gestão Conectada (só registros do tipo "Internação"), com o
  * cadastro da base de vidas (titular/dependente, empresa, idade) quando a
@@ -286,7 +412,10 @@ export async function getInternacoesGC(): Promise<{
   }
 
   // Negadas/canceladas não aconteceram: não recebem custo nem contam para reinternação.
-  const fichas = await carteirinhasGC(supabase, carteirinhas)
+  const [fichas, documentos] = await Promise.all([
+    carteirinhasGC(supabase, carteirinhas),
+    documentosPorNumero(supabase, linhas.map((l) => l.numero)),
+  ])
 
   const base = linhas
     .filter((l) => !['negada', 'cancelada'].includes(situacaoDe(l, hoje)))
@@ -354,6 +483,8 @@ export async function getInternacoesGC(): Promise<{
       reinternacao: reint.get(l.numero)
         ? { anterior: reint.get(l.numero)!.anterior, diasDesdeAlta: reint.get(l.numero)!.diasDesdeAlta }
         : null,
+      documentos: documentos.get(l.numero) ?? [],
+      motivoMedico: motivoDosDocumentos(documentos.get(l.numero) ?? []),
     }
   })
 
@@ -444,6 +575,8 @@ export type AutorizacaoGC = {
   /** OPME: o material vem num campo próprio, não na lista de procedimentos. */
   material: string | null
   saudeMental: boolean
+  documentos: DocumentoGC[]
+  motivoMedico: string | null
 }
 
 /** Situação resumida de uma autorização (texto do portal varia). */
@@ -495,11 +628,12 @@ export async function getAutorizacoesGC(desde: string): Promise<AutorizacaoGC[]>
   const linhas = (data ?? []) as LinhaAutorizacao[]
   const carteirinhas = [...new Set(linhas.map((l) => l.carteirinha).filter((x): x is string => Boolean(x)))]
 
-  const [fichas, { data: vidas }] = await Promise.all([
+  const [fichas, { data: vidas }, documentos] = await Promise.all([
     carteirinhasGC(supabase, carteirinhas),
     carteirinhas.length
       ? supabase.from('beneficiario_vidas').select('carteirinha, tipo, empresa, competencia').in('carteirinha', carteirinhas)
       : Promise.resolve({ data: [] as { carteirinha: string; tipo: string | null; empresa: string | null; competencia: string }[] }),
+    documentosPorNumero(supabase, linhas.map((l) => l.numero)),
   ])
   const cad = new Map<string, { tipo: string | null; empresa: string | null; competencia: string }>()
   for (const v of (vidas ?? []) as { carteirinha: string; tipo: string | null; empresa: string | null; competencia: string }[]) {
@@ -535,6 +669,8 @@ export async function getAutorizacoesGC(desde: string): Promise<AutorizacaoGC[]>
         hipoteseDiagnostica: l.hipotese_diagnostica,
         procedimentos: l.procedimentos ?? [],
       }),
+      documentos: documentos.get(l.numero) ?? [],
+      motivoMedico: motivoDosDocumentos(documentos.get(l.numero) ?? []),
     }
   })
 }
@@ -549,6 +685,9 @@ export type EventoHistoricoGC = {
   dataAlta: string | null
   carater: string | null
   resumo: string
+  /** Motivo segundo os anexos lidos (CID + diagnóstico). */
+  motivoMedico: string | null
+  documentos: DocumentoGC[]
 }
 
 /** Linha do tempo de uma pessoa no portal: tudo o que passou por autorização. */
@@ -569,6 +708,7 @@ export async function getHistoricoGC(carteirinha: string): Promise<{
     carteirinhasGC(supabase, [cart]),
   ])
   if (error) return { disponivel: false, ficha: null, eventos: [] }
+  const documentos = await documentosPorNumero(supabase, (data ?? []).map((l) => (l as { numero: string }).numero))
   const eventos = ((data ?? []) as {
     numero: string
     tipo_registro: string | null
@@ -598,6 +738,8 @@ export async function getHistoricoGC(carteirinha: string): Promise<{
         [procs.slice(0, 3).join('; ') + (procs.length > 3 ? '…' : ''), l.indicacao_clinica]
           .filter(Boolean)
           .join(' · ') || '—',
+      motivoMedico: motivoDosDocumentos(documentos.get(l.numero) ?? []),
+      documentos: documentos.get(l.numero) ?? [],
     }
   })
   return { disponivel: true, ficha: fichas.get(cart) ?? null, eventos }

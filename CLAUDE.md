@@ -88,6 +88,31 @@ vigente) → todas as manifestações, retomando de onde parou. App: cartão
 Beneficiário, plano no perfil, parte C (autorizações) na seção do relatório,
 status da varredura em Configurações → Robôs. Conferir a 1ª varredura.
 
+Depois (PRs #50–#53): menu "Converse com a Winners" (`app/converse`, rota
+`app/api/converse`, ferramentas em `lib/assistente/ferramentas.ts`, modelo
+claude-sonnet-5-5 via AI SDK). Chave do Claude em Configurações →
+Inteligência artificial (Vault, secret `assistente_anthropic_key`;
+`ANTHROPIC_API_KEY` tem prioridade). Situações novas de internação:
+`sem_alta` (antiga sem alta lançada) e `sem_registro` (pedido antigo que
+sumiu do portal) — regra em `situacaoDe` (`lib/gestao-conectada.ts`).
+Build no servidor usa `pnpm i --frozen-lockfile`: todo pacote importado tem
+de ser dependência direta e o lockfile precisa bater com as overrides.
+
+Fase 4 (PR feat/gc-anexos, 13/11/2026): o robô abre os ANEXOS de cada
+manifestação (`/VisualizarArquivoAmazon?Id=<case>`; aviso de internação,
+relatório/pedido médico, laudo, receita, orçamento OPME — quase sempre PDF
+escaneado/manuscrito), baixa só em memória e o Claude (claude-opus-5-5,
+`coletor-sulamerica/src/analisar-anexo.mjs`, mesma chave do chat) devolve
+CID, diagnóstico, resumo, medicamentos, exames e transcrição → tabela
+`gc_documentos` (o arquivo não é guardado). Roda após cada atualização
+(12 min, 25 manifestações; internação aberta é reconferida a cada 20 h).
+App: motivo (CID + diagnóstico) na tabela de internações, "Documentos
+anexados" no detalhe, nas autorizações e na linha do tempo; chat ganhou
+`documentos_medicos` e usa os anexos em "por qual causa". NUNCA vai para
+relatório da empresa (nem nominal). Carga manual:
+`node src/ler-anexos.mjs [minutos] [manifestações]`; teste sem gravar:
+`node src/testar-anexos.mjs <nº manifestação> [--mostrar]`.
+
 ## Ao final de uma sessão longa
 
 Se fizemos mudanças relevantes, atualizar este arquivo com o que foi feito e

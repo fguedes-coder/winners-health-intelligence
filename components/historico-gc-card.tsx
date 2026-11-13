@@ -2,6 +2,7 @@ import { History } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { getHistoricoGC, situacaoAutorizacao } from '@/lib/gestao-conectada'
+import { DocumentosGC } from '@/components/documentos-gc'
 
 // Linha do tempo da pessoa no SulAmérica Gestão Conectada: tudo o que passou
 // por autorização (internações, exames, prorrogações, OPME…), de qualquer
@@ -66,6 +67,15 @@ export async function HistoricoGCCard({ carteirinha }: { carteirinha: string }) 
                       .join(' · ')}
                   </div>
                   <div className="mt-0.5 text-xs">{e.resumo}</div>
+                  {e.motivoMedico && <div className="mt-0.5 text-xs font-medium">{e.motivoMedico}</div>}
+                  {e.documentos.length > 0 && (
+                    <details className="mt-1 text-xs">
+                      <summary className="cursor-pointer text-primary">Ver documentos ({e.documentos.length})</summary>
+                      <div className="mt-2">
+                        <DocumentosGC documentos={e.documentos} compacto />
+                      </div>
+                    </details>
+                  )}
                 </li>
               )
             })}
