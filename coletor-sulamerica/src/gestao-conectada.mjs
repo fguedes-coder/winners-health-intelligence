@@ -583,3 +583,106 @@ async function lerManifestacao(s, caseId) {
 
   return { caseId, campos, ...listas }
 }
+
+// ---------------------------------------------------------------------------
+// Fase 4 — anexos: /gestaoconectada/VisualizarArquivoAmazon?Id=<caso>
+// ---------------------------------------------------------------------------
+// É a página que abre ao clicar no arquivo da seção "Anexos" da ficha. Mostra
+// um arquivo por vez (paginação li#pag1…N); o arquivo fica num bucket com
+// link assinado, embutido no script da página (PDF num iframe, imagem num
+// canvas). O robô baixa os bytes SÓ EM MEMÓRIA e entrega a quem chamou —
+// nada vai para disco nem para log. Sem anexos, o portal mostra uma página
+// de erro (sem link de arquivo).
+
+const ARQUIVO_ATUAL = () => {
+  // Ao trocar de página, o portal acrescenta um script novo sem tirar o
+  // antigo: vale a ÚLTIMA ocorrência (e o iframe do PDF, se houver).
+  const sc = [...document.scripts].map((s) => s.textContent).join('\n')
+  const urls = sc.match(/https:\/\/storage\.googleapis\.com\/[^'"\s\\]+/g) ?? []
+  const iframe = document.querySelector('iframe#iframePDF')?.getAttribute('src') ?? ''
+  const url = (/^https:\/\/storage\.googleapis\.com\//.test(iframe) ? iframe : urls[urls.length - 1]) ?? null
+  // Rótulos "Descrição" e "Recebido" (span.label) com o valor ao lado.
+  const valor = (re) => {
+    const s = [...document.querySelectorAll('span.label')].find((e) => re.test(e.innerText))
+    if (!s) return null
+    const t = (s.parentElement?.innerText ?? '').replace(/\s+/g, ' ').trim()
+    return t.replace(re, '').replace(/^[\s:]+/, '').trim() || null
+  }
+  return {
+    url,
+    descricao: valor(/^\s*Descri[çc][ãa]o/i),
+    recebido: valor(/^\s*Recebido/i),
+    paginas: document.querySelectorAll('li[id^="pag"] a').length,
+  }
+}
+
+/**
+ * Anexos de uma manifestação, na ordem do portal. Arquivos cuja chave está em
+ * `conhecidos` não são baixados (bytes = null).
+ * @returns {Promise<{ chave: string, ordem: number, descricao: string | null,
+ *   recebido: string | null, formato: string | null, bytes: Buffer | null }[]>}
+ */
+async function anexosDoCaso(s, caseId, conhecidos) {
+  const { page } = s
+  await s.ir(`${s.base}/VisualizarArquivoAmazon?Id=${caseId}`)
+  await page.waitForLoadState('load').catch(() => {})
+  await page.waitForTimeout(1_000)
+  let atual = await page.evaluate(ARQUIVO_ATUAL)
+  if (!atual.url) return []
+  const total = Math.max(1, atual.paginas)
+  const arquivos = []
+  for (let i = 1; i <= total; i++) {
+    if (i > 1) {
+      const antes = atual.url
+      await page.locator(`li#pag${i} a`).first().click()
+      const fim = Date.now() + 45_000
+      for (;;) {
+        await page.waitForTimeout(800)
+        atual = (await page.evaluate(ARQUIVO_ATUAL).catch(() => null)) ?? {}
+        if (atual.url && atual.url !== antes) break
+        if (Date.now() > fim) throw new Error(`arquivo ${i} de ${total} não abriu no visualizador`)
+      }
+    }
+    // Chave = nome do arquivo no bucket (ex.: 134226437.pdf). O "AN-…" do
+    // script não muda ao trocar de página, então não serve para distinguir.
+    const chave = new URL(atual.url).pathname.split('/').pop() || atual.url
+    let bytes = null
+    let formato = null
+    if (!conhecidos.has(chave)) {
+      const r = await page.request.get(atual.url, { timeout: 120_000 })
+      if (!r.ok()) throw new Error(`arquivo ${i} de ${total}: HTTP ${r.status()}`)
+      formato = (r.headers()['content-type'] ?? '').split(';')[0].trim().toLowerCase() || null
+      bytes = await r.body()
+    }
+    arquivos.push({ chave, ordem: i, descricao: atual.descricao, recebido: atual.recebido, formato, bytes })
+  }
+  return arquivos
+}
+
+/**
+ * Lê os anexos de cada manifestação e entrega a `aoLer` (que analisa e grava).
+ * Para no `prazo`; o que faltar fica para o próximo ciclo.
+ * @param {{ credenciais: { login: string, senha: string }, log: (m: string) => void,
+ *   casos: string[], conhecidos: Map<string, Set<string>>, prazo: number,
+ *   aoLer: (caseId: string, arquivos: Awaited<ReturnType<typeof anexosDoCaso>>) => Promise<void> }} opts
+ */
+export async function coletarAnexos({ credenciais, log, casos, conhecidos, prazo, aoLer }) {
+  if (!casos.length) return { lidos: 0, pendentes: 0 }
+  const s = await abrirSessao(credenciais, log)
+  let lidos = 0
+  try {
+    for (const caseId of casos) {
+      if (Date.now() > prazo) break
+      try {
+        const arquivos = await anexosDoCaso(s, caseId, conhecidos.get(caseId) ?? new Set())
+        await aoLer(caseId, arquivos)
+        lidos++
+      } catch (e) {
+        log(`anexos de ${caseId.slice(0, 6)}… não lidos: ${curto(e)}`)
+      }
+    }
+  } finally {
+    await s.fechar()
+  }
+  return { lidos, pendentes: casos.length - lidos }
+}

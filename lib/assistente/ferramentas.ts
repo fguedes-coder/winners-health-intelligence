@@ -13,7 +13,9 @@ import {
   getHistoricoGC,
   getInternacoesGC,
   hojeSP,
+  documentosPorNumero,
   situacaoAutorizacao,
+  type DocumentoGC,
   type InternacaoGC,
 } from '@/lib/gestao-conectada'
 import { getDashboardData, getEventosDetalhados, type EventoDetalhado } from '@/lib/queries'
@@ -32,12 +34,39 @@ const contem = (texto: string | null | undefined, termos: string[]) => {
 
 const reais = (v: number) => Math.round(v * 100) / 100
 
-const motivo = (i: { indicacaoClinica: string | null; hipoteseDiagnostica?: string | null; procedimentos: Record<string, string>[] }) => {
+/** Anexos lidos (relatório médico, laudo…) sem a transcrição — ver documentos_medicos. */
+const relatorioMedico = (docs: DocumentoGC[]) =>
+  docs.length
+    ? docs.map((d) => ({
+        tipo: d.tipoDocumento,
+        data: d.dataDocumento,
+        cids: d.cids,
+        diagnostico: d.diagnostico,
+        resumo: d.resumo,
+        conduta: d.conduta,
+        leito: d.leito,
+        diariasPrevistas: d.diariasPrevistas,
+        medicamentos: d.medicamentos.length ? d.medicamentos : undefined,
+        exames: d.exames.length ? d.exames : undefined,
+        erro: d.erro ?? undefined,
+      }))
+    : null
+
+const textoDosDocumentos = (docs: DocumentoGC[]) =>
+  docs.map((d) => [d.cids.map((c) => `${c.codigo} ${c.descricao ?? ''}`).join(' '), d.diagnostico, d.resumo, d.transcricao].join(' ')).join(' ')
+
+const motivo = (i: {
+  indicacaoClinica: string | null
+  hipoteseDiagnostica?: string | null
+  procedimentos: Record<string, string>[]
+  documentos: DocumentoGC[]
+}) => {
   const procs = i.procedimentos.map((p) => p['Descrição'] ?? p['Descricao'] ?? '').filter(Boolean)
   return {
     hipotese: i.hipoteseDiagnostica ?? null,
     indicacao: i.indicacaoClinica,
     procedimentos: procs.slice(0, 6),
+    relatorioMedico: relatorioMedico(i.documentos),
   }
 }
 
@@ -214,6 +243,7 @@ export const ferramentas = {
           procedimentos: a.procedimentos.map((p) => p['Descrição'] ?? p['Descricao'] ?? '').filter(Boolean).slice(0, 6),
           material: a.material,
           indicacao: a.indicacaoClinica,
+          relatorioMedico: relatorioMedico(a.documentos),
           saudeMental: a.saudeMental,
         })),
       }
@@ -236,10 +266,14 @@ export const ferramentas = {
         getEventosDetalhados(),
       ])
       const gcInt = internacoes
-        .filter((i) => contem([i.indicacaoClinica, i.hipoteseDiagnostica, ...i.procedimentos.map((p) => Object.values(p).join(' '))].join(' '), t))
+        .filter((i) =>
+          contem([i.indicacaoClinica, i.hipoteseDiagnostica, ...i.procedimentos.map((p) => Object.values(p).join(' ')), textoDosDocumentos(i.documentos)].join(' '), t),
+        )
         .map((i) => ({ ...resumoInternacao(i), fonte: 'Gestão Conectada (internação)' }))
       const gcAut = autorizacoes
-        .filter((a) => contem([a.indicacaoClinica, a.material, ...a.procedimentos.map((p) => Object.values(p).join(' '))].join(' '), t))
+        .filter((a) =>
+          contem([a.indicacaoClinica, a.material, ...a.procedimentos.map((p) => Object.values(p).join(' ')), textoDosDocumentos(a.documentos)].join(' '), t),
+        )
         .map((a) => ({
           fonte: 'Gestão Conectada (autorização)',
           beneficiario: a.beneficiarioNome,
@@ -250,6 +284,7 @@ export const ferramentas = {
           prestador: a.prestador,
           procedimentos: a.procedimentos.map((p) => p['Descrição'] ?? '').filter(Boolean).slice(0, 4),
           material: a.material,
+          relatorioMedico: relatorioMedico(a.documentos),
         }))
       // TXT: agrupa por pessoa e serviço.
       const txt = new Map<string, { beneficiario: string; carteirinha: string; servicos: Set<string>; lancamentos: number; valor: number; de: string; ate: string; internacao: boolean }>()
@@ -274,7 +309,8 @@ export const ferramentas = {
           .sort((a, b) => b.valor - a.valor)
           .slice(0, 60)
           .map((g) => ({ ...g, servicos: [...g.servicos].slice(0, 8), valor: reais(g.valor), fonte: 'TXT contas pagas' })),
-        observacao: 'O portal não preenche CID/diagnóstico: a busca é pelo nome do procedimento ou serviço.',
+        observacao:
+          'No portal, a busca cobre procedimentos, indicação clínica e os anexos lidos (CID, diagnóstico, transcrição do relatório médico). No TXT, só o nome do serviço.',
       }
     },
   }),
@@ -328,7 +364,7 @@ export const ferramentas = {
           carteirinha: cart,
           perfil: e0 ? { tipo: e0.tipoBeneficiario, idade: e0.idade, sexo: e0.sexo, plano: e0.plano, filial: e0.subCodigo } : null,
           fichaPortal: ficha,
-          gestaoConectada: linha.slice(0, 60),
+          gestaoConectada: linha.slice(0, 60).map(({ documentos, ...e }) => ({ ...e, relatorioMedico: relatorioMedico(documentos) })),
           contasPagasPorCompetencia: [...porMes.entries()]
             .sort(([a], [b2]) => a.localeCompare(b2))
             .map(([competencia, g]) => ({
@@ -343,6 +379,20 @@ export const ferramentas = {
         })
       }
       return { encontrado: true, pessoas }
+    },
+  }),
+
+  documentos_medicos: tool({
+    description:
+      'Documentos anexados a uma manifestação no portal (aviso/solicitação de internação, relatório médico, pedido médico, laudo, receita, orçamento de OPME), lidos por IA: CID, diagnóstico, quadro clínico, conduta, medicamentos, exames e a TRANSCRIÇÃO completa. Use para ir a fundo num caso (ex.: "por que está internada?", "o que diz o laudo?"). Passe o número da manifestação (vem das outras ferramentas).',
+    inputSchema: z.object({ manifestacoes: z.array(z.string()).min(1).max(10) }),
+    execute: async ({ manifestacoes }) => {
+      const supabase = await createClient()
+      const docs = await documentosPorNumero(supabase, manifestacoes)
+      return {
+        aviso: 'Leitura automática de documento escaneado/manuscrito: trechos marcados [ilegível] não foram lidos. Na dúvida, conferir o original no portal.',
+        manifestacoes: manifestacoes.map((m) => ({ manifestacao: m, documentos: docs.get(m) ?? [] })),
+      }
     },
   }),
 
@@ -376,7 +426,7 @@ export function promptSistema() {
 Hoje é ${hoje} (horário de São Paulo). Cliente principal: DMS LOG (apólice SulAmérica 81938; filiais/subestipulantes 82CC9 matriz, 82CCA, 82CCB SP, 82CCC RJ). Ano contratual começa em março.
 
 Fontes de dados (use as ferramentas; nunca invente números):
-- SulAmérica Gestão Conectada (portal, lido por robô a cada 6 h): internações em tempo real (data de internação, alta, hospital, procedimentos, indicação clínica) e autorizações (exames SP/SADT, prorrogações, OPME). Internações desde 16/07/2026; autorizações ~1 ano; a varredura semanal traz histórico mais antigo. O portal NÃO preenche CID/diagnóstico: "causa" = indicação clínica + procedimentos — diga isso quando perguntarem a causa.
+- SulAmérica Gestão Conectada (portal, lido por robô a cada 6 h): internações em tempo real (data de internação, alta, hospital, procedimentos, indicação clínica) e autorizações (exames SP/SADT, prorrogações, OPME). Internações desde 16/07/2026; autorizações ~1 ano; a varredura semanal traz histórico mais antigo. Os campos do portal quase nunca trazem CID/diagnóstico, mas os ANEXOS (aviso de internação, relatório médico, laudo, receita) são lidos por IA: "relatorioMedico" traz CID, diagnóstico e resumo; documentos_medicos traz a transcrição completa. Para "por qual causa", use o relatorioMedico; sem anexo lido, use indicação clínica + procedimentos e diga que não há relatório anexado. A leitura de documento manuscrito pode ter trechos [ilegível].
 - TXT de contas pagas (arquivo da operadora): valores pagos por evento, por COMPETÊNCIA = mês de pagamento, não do atendimento (eventos chegam 1–2 meses depois). É a base de custo e sinistralidade.
 
 Como agir:
@@ -384,6 +434,7 @@ Como agir:
 - "Internação no mês" pode ser pelo mês em que aconteceu (Gestão Conectada) ou pelo mês em que foi paga (TXT/indicadores). Se não estiver claro, responda as duas e explique a diferença em uma linha.
 - Para temas clínicos (ex.: cirurgia do coração), use buscar_procedimento com vários termos técnicos e sinônimos.
 - Para uma pessoa específica, use historico_pessoa.
+- Para ir a fundo num caso (motivo da internação, o que o médico escreveu, medicamentos, exames), use documentos_medicos com o número da manifestação.
 - Combine ferramentas quando precisar; não peça confirmação para consultar.
 
 Formato da resposta: português do Brasil, direto. Comece pela resposta (número/nome), depois os detalhes. Use tabelas Markdown curtas para listas de pessoas. Valores em R$ com separador brasileiro; datas DD/MM/AAAA. Diga a data da última atualização quando o dado for do portal. Se o dado não existir no banco, diga claramente o que falta e de onde viria.`

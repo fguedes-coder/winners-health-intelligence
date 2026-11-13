@@ -76,6 +76,17 @@ export const config = {
         .map((x) => x.trim().toUpperCase())
         .filter(Boolean),
     },
+    // Fase 4: anexos (pedido médico, aviso de internação, laudo, receita…)
+    // lidos pelo Claude depois de cada atualização. Fica pouco tempo por
+    // ciclo para não segurar a fila; o que sobrar continua no próximo.
+    anexos: {
+      maxMinutos: Number(process.env.GC_ANEXOS_MAX_MIN ?? 12),
+      // Manifestações novas por ciclo (as mais recentes primeiro).
+      porCiclo: Number(process.env.GC_ANEXOS_POR_CICLO ?? 25),
+      // Internação ainda aberta: confere de novo se o hospital anexou algo.
+      reabrirHoras: 20,
+      modelo: process.env.GC_ANEXOS_MODELO?.trim() || 'claude-opus-5-5',
+    },
   },
   imap: {
     // O certificado TLS do servidor de e-mail é emitido para este nome — e não

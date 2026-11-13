@@ -21,6 +21,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { beneficiarioLabel, type BenefDisplay } from '@/lib/display-prefs'
 import type { InternacaoGC, SituacaoInternacao, SolicitacaoSaudeMentalGC, StatusColetaGC } from '@/lib/gestao-conectada'
+import { DocumentosGC } from '@/components/documentos-gc'
 import { cn } from '@/lib/utils'
 
 const SITUACAO: Record<SituacaoInternacao, { rotulo: string; variant: 'default' | 'neutral' | 'success' | 'warning' | 'destructive' }> = {
@@ -335,7 +336,7 @@ export function InternacoesClient({
       <Card>
         <CardHeader>
           <CardTitle>Todas as solicitações de internação</CardTitle>
-          <CardDescription>Clique numa linha para ver hipótese diagnóstica, indicação clínica e procedimentos.</CardDescription>
+          <CardDescription>Clique numa linha para ver o relatório médico anexado, a indicação clínica e os procedimentos.</CardDescription>
           <div className="mt-2 flex flex-wrap gap-1.5">
             {FILTROS.map((f) => (
               <button
@@ -426,7 +427,14 @@ function TabelaInternacoes({
                 <TableCell>
                   <Badge variant={s.variant}>{s.rotulo}</Badge>
                 </TableCell>
-                <TableCell className="max-w-56 truncate" title={i.prestador ?? ''}>{i.prestador ?? '—'}</TableCell>
+                <TableCell className="max-w-56" title={i.prestador ?? ''}>
+                  <div className="truncate">{i.prestador ?? '—'}</div>
+                  {i.motivoMedico && (
+                    <div className="line-clamp-2 whitespace-normal text-xs text-muted-foreground" title={i.motivoMedico}>
+                      {i.motivoMedico}
+                    </div>
+                  )}
+                </TableCell>
                 <TableCell className="text-xs">
                   {i.carater ?? '—'}
                   <div className="text-muted-foreground">{i.tipoInternacao ?? ''}</div>
@@ -507,6 +515,8 @@ function Detalhe({ i, hoje }: { i: InternacaoGC; hoje: string }) {
           </div>
         )}
       </div>
+
+      <DocumentosGC documentos={i.documentos} />
 
       <Lista titulo="Procedimentos e exames solicitados" itens={i.procedimentos} />
       <Lista titulo="Medicamentos" itens={i.medicamentos} />

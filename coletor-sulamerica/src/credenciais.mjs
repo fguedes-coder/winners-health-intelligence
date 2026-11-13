@@ -63,3 +63,16 @@ export async function carregarCredenciais(db) {
 export async function carregarCredenciaisGC(db) {
   return par(await lerCofre(db), 'gc_login', 'gc_senha')
 }
+
+/**
+ * Chave da API do Claude — a mesma do "Converse com a Winners" (Configurações
+ * → Inteligência artificial). A variável ANTHROPIC_API_KEY tem prioridade.
+ * @returns {Promise<string | null>}
+ */
+export async function carregarChaveClaude(db) {
+  const env = String(process.env.ANTHROPIC_API_KEY ?? '').trim()
+  if (env) return env
+  const { data, error } = await db.rpc('chave_assistente')
+  if (error) throw new Error(`Não foi possível ler a chave do Claude: ${error.message}`)
+  return String(data ?? '').trim() || null
+}
