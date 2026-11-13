@@ -58,7 +58,11 @@ export async function lerAnexos(db, credenciais, log, ajuste = {}) {
         } else {
           // Erro da API (rede, limite, chave) sobe: a manifestação não é
           // marcada e volta no próximo ciclo. Recusa/formato ficam gravados.
-          const res = await analisar({ bytes: f.bytes, formato: f.formato, contexto: c.contexto })
+          const res = await analisar({ bytes: f.bytes, formato: f.formato, contexto: c.contexto }).catch((e) => {
+            // Crédito esgotado ou chave recusada: para o ciclo inteiro.
+            if ([401, 403].includes(e?.status) || /credit balance/i.test(String(e?.message))) e.parar = true
+            throw e
+          })
           tokens.entrada += res.tokens.entrada
           tokens.saida += res.tokens.saida
           leitura = colunasDaLeitura(res)

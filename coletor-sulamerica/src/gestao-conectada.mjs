@@ -679,6 +679,8 @@ export async function coletarAnexos({ credenciais, log, casos, conhecidos, prazo
         lidos++
       } catch (e) {
         log(`anexos de ${caseId.slice(0, 6)}… não lidos: ${curto(e)}`)
+        // Sem crédito / chave inválida: não adianta abrir as outras.
+        if (e?.parar) break
       }
     }
   } finally {
