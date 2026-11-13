@@ -3,12 +3,15 @@ import { redirect } from 'next/navigation'
 import { DashboardShell } from '@/components/dashboard-shell'
 import { ConfiguracoesForm } from './configuracoes-form'
 import { RobosPanel } from './robos-panel'
+import { AssistentePanel } from './assistente-panel'
+import { getStatusChaveAssistente } from '@/lib/assistente/chave'
 import { getPerfil } from './actions'
 import { getStatusRoboSulAmerica } from './robos-actions'
 
 const ABAS = [
   { id: 'geral', rotulo: 'Geral' },
   { id: 'robos', rotulo: 'Robôs' },
+  { id: 'ia', rotulo: 'Inteligência artificial' },
 ] as const
 
 export default async function ConfiguracoesPage({
@@ -20,7 +23,7 @@ export default async function ConfiguracoesPage({
   if (!perfil) redirect('/')
 
   const { aba: abaParam } = await searchParams
-  const aba = abaParam === 'robos' ? 'robos' : 'geral'
+  const aba = abaParam === 'robos' ? 'robos' : abaParam === 'ia' ? 'ia' : 'geral'
 
   return (
     <DashboardShell title="Configurações">
@@ -43,6 +46,8 @@ export default async function ConfiguracoesPage({
 
       {aba === 'robos' ? (
         <RobosPanel status={await getStatusRoboSulAmerica()} />
+      ) : aba === 'ia' ? (
+        <AssistentePanel status={await getStatusChaveAssistente()} />
       ) : (
         <ConfiguracoesForm perfil={perfil} />
       )}
