@@ -73,7 +73,7 @@ export async function lerAnexos(db, credenciais, log, ajuste = {}) {
           arquivo: f.chave,
           ordem: f.ordem,
           descricao: f.descricao,
-          recebido_em: dataHoraBR(f.recebido),
+          recebido_em: dataHoraBR(f.recebido, 'Z'),
           formato: f.formato,
           tamanho: f.bytes.length,
           hash,

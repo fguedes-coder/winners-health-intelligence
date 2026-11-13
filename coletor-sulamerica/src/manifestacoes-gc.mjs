@@ -25,11 +25,17 @@ export function dataBR(v) {
 }
 
 /** '10/11/2026 23:45' → '2026-11-10T23:45:00-03:00' (Brasília, sem horário de verão desde 2019). */
-export function dataHoraBR(v) {
+// `fuso`: o portal mostra as fichas no horário de Brasília, mas o visualizador
+// de anexos mostra o "Recebido" em UTC ('Z'). Data só com dia fica no dia.
+// Data impossível (o portal já mostrou 32/03) vira null.
+export function dataHoraBR(v, fuso = '-03:00') {
   const m = /(\d{2})\/(\d{2})\/(\d{4})(?:\D+(\d{1,2}):(\d{2}))?/.exec(String(v ?? ''))
   if (!m) return null
+  const [dia, mes, ano] = [Number(m[1]), Number(m[2]), Number(m[3])]
+  const d = new Date(Date.UTC(ano, mes - 1, dia))
+  if (d.getUTCFullYear() !== ano || d.getUTCMonth() !== mes - 1 || d.getUTCDate() !== dia) return null
   const hh = String(m[4] ?? '0').padStart(2, '0')
-  return `${m[3]}-${m[2]}-${m[1]}T${hh}:${m[5] ?? '00'}:00-03:00`
+  return `${m[3]}-${m[2]}-${m[1]}T${hh}:${m[5] ?? '00'}:00${m[4] == null ? '-03:00' : fuso}`
 }
 
 /**
