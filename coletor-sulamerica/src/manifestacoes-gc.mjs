@@ -102,12 +102,18 @@ export async function gravarManifestacoes(db, manifestacoes) {
     // internação psiquiátrica continua marcada depois de sair da janela.
     const { data: antigas, error: aErr } = await db
       .from('gc_manifestacoes')
-      .select('numero, relatorios')
+      .select('numero, relatorios, visto_em_relatorio_em')
       .in('numero', linhas.map((l) => l.numero))
     if (aErr) throw new Error(`Falha ao ler as manifestações gravadas: ${aErr.message}`)
-    const anteriores = new Map((antigas ?? []).map((a) => [a.numero, a.relatorios ?? []]))
+    const anteriores = new Map((antigas ?? []).map((a) => [a.numero, a]))
+    const agora = new Date().toISOString()
     for (const l of linhas) {
-      l.relatorios = [...new Set([...(anteriores.get(l.numero) ?? []), ...l.relatorios])].sort()
+      const a = anteriores.get(l.numero)
+      // Apareceu num relatório NESTA leitura? É o que diz se uma internação
+      // sem alta ainda está em curso (ver situacaoDe no app). Todas as linhas
+      // levam a coluna — o upsert em lote anula a que faltar.
+      l.visto_em_relatorio_em = l.relatorios.length ? agora : (a?.visto_em_relatorio_em ?? null)
+      l.relatorios = [...new Set([...(a?.relatorios ?? []), ...l.relatorios])].sort()
     }
     const { error } = await db.from('gc_manifestacoes').upsert(linhas, { onConflict: 'numero' })
     if (error) throw new Error(`Falha ao gravar as manifestações: ${error.message}`)
@@ -165,12 +171,15 @@ export async function gravarOrigens(db, origens) {
     .in('case_id', comNome.map((o) => o.caseId))
   if (error) throw new Error(`Falha ao ler as manifestações gravadas: ${error.message}`)
   const porCaso = new Map((data ?? []).map((l) => [l.case_id, l]))
+  const agora = new Date().toISOString()
   for (const o of comNome) {
     const l = porCaso.get(o.caseId)
     if (!l) continue
     const juntos = [...new Set([...(l.relatorios ?? []), ...o.relatorios])].sort()
-    if (juntos.length === (l.relatorios ?? []).length) continue
-    const { error: e } = await db.from('gc_manifestacoes').update({ relatorios: juntos }).eq('numero', l.numero)
+    const { error: e } = await db
+      .from('gc_manifestacoes')
+      .update({ relatorios: juntos, visto_em_relatorio_em: agora })
+      .eq('numero', l.numero)
     if (e) throw new Error(`Falha ao anotar relatórios: ${e.message}`)
   }
 }

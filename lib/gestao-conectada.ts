@@ -20,6 +20,8 @@ export type SituacaoInternacao =
   | 'em_analise'
   | 'negada'
   | 'cancelada'
+  /** Internação antiga sem alta lançada no portal (comum em day hospital). */
+  | 'sem_alta'
 
 export type ItemLista = Record<string, string>
 
@@ -104,16 +106,33 @@ function idadeEm(nascimento: string | null, ref: string): number | null {
   return idade >= 0 && idade < 130 ? idade : null
 }
 
-function situacaoDe(l: {
-  status_portal: string | null
-  data_internacao: string | null
-  data_alta: string | null
-}): SituacaoInternacao {
+/** Leitura do relatório "fresca": o robô roda a cada 6 h, das 6h às 22h. */
+const VISTO_RECENTE_MS = 30 * 3_600_000
+/** Sem alta e sem aparecer nos relatórios: ainda internado só dentro das diárias + folga. */
+const FOLGA_DIARIAS = 2
+
+function situacaoDe(
+  l: {
+    status_portal: string | null
+    data_internacao: string | null
+    data_alta: string | null
+    diarias_autorizadas?: number | null
+    visto_em_relatorio_em?: string | null
+  },
+  hoje: string,
+): SituacaoInternacao {
   const st = l.status_portal ?? ''
   if (/negad/i.test(st)) return 'negada'
   if (/cancel/i.test(st)) return 'cancelada'
   if (l.data_alta) return 'alta'
-  if (l.data_internacao) return 'internado'
+  if (l.data_internacao) {
+    // "Internado agora" só com evidência atual: apareceu nos relatórios do
+    // portal na leitura recente, ou ainda está dentro das diárias autorizadas.
+    // Sem isso é internação antiga cuja alta o hospital nunca lançou.
+    const visto = l.visto_em_relatorio_em ? Date.now() - Date.parse(l.visto_em_relatorio_em) <= VISTO_RECENTE_MS : false
+    const dentroDasDiarias = diasEntre(l.data_internacao, hoje) <= Math.max(l.diarias_autorizadas ?? 1, 1) + FOLGA_DIARIAS
+    return visto || dentroDasDiarias ? 'internado' : 'sem_alta'
+  }
   if (/autoriz/i.test(st)) return 'aguardando'
   return 'em_analise'
 }
@@ -144,6 +163,7 @@ type Linha = {
   medicamentos: ItemLista[] | null
   relacionadas: ItemLista[] | null
   relatorios: string[] | null
+  visto_em_relatorio_em: string | null
 }
 
 /**
@@ -165,7 +185,7 @@ export async function getInternacoesGC(): Promise<{
     supabase
       .from('gc_manifestacoes')
       .select(
-        'numero, tipo_registro, status_portal, abertura_em, carteirinha, beneficiario_nome, prestador_nome, medico_nome, carater, tipo_internacao, regime, acomodacao, data_prevista, data_internacao, data_alta, tempo_internacao, diarias_solicitadas, diarias_autorizadas, hipotese_diagnostica, indicacao_clinica, motivo_negativa, procedimentos, medicamentos, relacionadas, relatorios',
+        'numero, tipo_registro, status_portal, abertura_em, carteirinha, beneficiario_nome, prestador_nome, medico_nome, carater, tipo_internacao, regime, acomodacao, data_prevista, data_internacao, data_alta, tempo_internacao, diarias_solicitadas, diarias_autorizadas, hipotese_diagnostica, indicacao_clinica, motivo_negativa, procedimentos, medicamentos, relacionadas, relatorios, visto_em_relatorio_em',
       )
       .ilike('tipo_registro', 'interna%')
       .order('abertura_em', { ascending: false })
@@ -257,7 +277,7 @@ export async function getInternacoesGC(): Promise<{
   const fichas = await carteirinhasGC(supabase, carteirinhas)
 
   const base = linhas
-    .filter((l) => !['negada', 'cancelada'].includes(situacaoDe(l)))
+    .filter((l) => !['negada', 'cancelada'].includes(situacaoDe(l, hoje)))
     .map((l) => ({
     numero: l.numero,
     carteirinha: l.carteirinha,
@@ -268,14 +288,16 @@ export async function getInternacoesGC(): Promise<{
   const reint = reinternacoes(base)
 
   const internacoes = linhas.map((l): InternacaoGC => {
-    const situacao = situacaoDe(l)
+    const situacao = situacaoDe(l, hoje)
     const cad = l.carteirinha ? cadastro.get(l.carteirinha) : undefined
+    // Sem alta registrada: o "tempo de internação" do portal conta até hoje
+    // e não significa nada — fica sem dias.
     const dias = l.data_internacao
       ? l.data_alta
         ? diasEntre(l.data_internacao, l.data_alta)
         : situacao === 'internado'
           ? diasEntre(l.data_internacao, hoje)
-          : l.tempo_internacao
+          : null
       : null
     return {
       numero: l.numero,
