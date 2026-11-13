@@ -259,3 +259,11 @@ create policy gc_beneficiarios_select on public.gc_beneficiarios for select to a
 revoke all on public.gc_beneficiarios from anon, authenticated;
 grant select on public.gc_beneficiarios to authenticated;
 grant all on public.gc_beneficiarios to service_role;
+
+-- Quando a manifestação apareceu num relatório do portal pela última vez.
+-- Internação sem alta só conta como "internado agora" se foi vista há pouco
+-- (ou ainda está dentro das diárias): as antigas que a varredura traz sem
+-- alta lançada viram "sem alta registrada".
+alter table public.gc_manifestacoes add column if not exists visto_em_relatorio_em timestamptz;
+update public.gc_manifestacoes set visto_em_relatorio_em = atualizado_em
+  where visto_em_relatorio_em is null and relatorios <> '{}';
