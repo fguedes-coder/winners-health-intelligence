@@ -113,6 +113,8 @@ relatório da empresa (nem nominal). Carga manual:
 `node src/ler-anexos.mjs [minutos] [manifestações]`; teste sem gravar:
 `node src/testar-anexos.mjs <nº manifestação> [--mostrar]`.
 
+Alta confirmada (PR feat/alta-confirmada, 16/11/2026): sem alta no portal NÃO é certeza (na base, 1 em 5 internações nunca teve a alta lançada; internações de até 7 dias quase nunca têm prorrogação). `getInternacoesGC` decide: "internado" só com sinal nos últimos 10 dias (entrada, prorrogação COM diária — complementação chega até depois da alta —, anexo) ou dentro das diárias; senão "alta estimada" (conta no TXT: último dia cobrado) ou "alta não confirmada" (`sem_alta`). Coluna `alta_lancada_em` (trigger) mede o atraso de cada hospital. O "Recebido" do visualizador de anexos é UTC.
+
 ## Ao final de uma sessão longa
 
 Se fizemos mudanças relevantes, atualizar este arquivo com o que foi feito e

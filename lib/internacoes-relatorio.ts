@@ -92,7 +92,8 @@ const SITUACAO: Record<SituacaoInternacao, string> = {
   em_analise: 'Em análise',
   negada: 'Negada',
   cancelada: 'Cancelada',
-  sem_alta: 'Sem alta registrada',
+  sem_alta: 'Alta não confirmada',
+  alta_estimada: 'Alta estimada',
   sem_registro: 'Sem internação registrada',
 }
 
@@ -124,7 +125,13 @@ function casoDe(i: InternacaoGC, custo: number | null): CasoInternacaoRelatorio 
     perfil: [i.tipoBeneficiario, i.idade != null ? `${i.idade} anos` : null, i.empresa].filter(Boolean).join(' · '),
     hospital: i.prestador ?? '—',
     internacao: dataBR(i.dataInternacao),
-    alta: i.dataAlta ? dataBR(i.dataAlta) : i.situacao === 'internado' ? 'internado' : '—',
+    alta: i.dataAlta
+      ? dataBR(i.dataAlta)
+      : i.dataAltaEstimada
+        ? `~${dataBR(i.dataAltaEstimada)}`
+        : i.situacao === 'internado'
+          ? 'internado'
+          : '—',
     dias: i.dias,
     // "Urgência/Emergência" quebra no meio da palavra na coluna estreita do PDF.
     caraterTipo: [i.carater?.replace(/Urg[eê]ncia\s*\/\s*Emerg[eê]ncia/i, 'Urgência'), i.tipoInternacao].filter(Boolean).join(' / ') || '—',

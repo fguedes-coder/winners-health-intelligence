@@ -20,8 +20,14 @@ export type SituacaoInternacao =
   | 'em_analise'
   | 'negada'
   | 'cancelada'
-  /** Internação antiga sem alta lançada no portal (comum em day hospital). */
+  /**
+   * "Alta não confirmada": sem alta no portal e sem sinal de que a pessoa segue
+   * internada (prorrogação com diária, anexo novo) há mais de 10 dias, e ainda
+   * sem conta no TXT. Na base, 1 em cada 5 internações nunca teve a alta lançada.
+   */
   | 'sem_alta'
+  /** Sem alta no portal, mas a conta já chegou no TXT: alta estimada pelo último dia cobrado. */
+  | 'alta_estimada'
   /** Pedido antigo sem data de internação: a data prevista passou e o portal não o mostra mais. */
   | 'sem_registro'
 
@@ -80,7 +86,15 @@ export type InternacaoGC = {
   dataPrevista: string | null
   dataInternacao: string | null
   dataAlta: string | null
-  /** Dias internado: até hoje (sem alta) ou até a alta. */
+  /** Sem alta no portal: último dia cobrado no TXT (ou fim das diárias autorizadas, se depois). */
+  dataAltaEstimada: string | null
+  /** Quando o robô viu a alta aparecer no portal (null = já veio com alta ou ainda sem alta). */
+  altaLancadaEm: string | null
+  /** Último sinal de que a pessoa segue internada: entrada, prorrogação com diária ou anexo novo. */
+  ultimoSinal: string | null
+  /** Prorrogações com diária autorizada ligadas a esta internação. */
+  prorrogacoes: number
+  /** Dias internado: até hoje (internado), até a alta ou até a alta estimada. */
   dias: number | null
   diariasSolicitadas: number | null
   diariasAutorizadas: number | null
@@ -132,6 +146,12 @@ export function hojeSP(): string {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date())
 }
 
+/** Data (AAAA-MM-DD) de um timestamp no horário de São Paulo. */
+const diaSP = (iso: string) => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date(iso))
+
+const maisDias = (iso: string, n: number) =>
+  new Date(Date.parse(`${iso.slice(0, 10)}T00:00:00Z`) + n * DIA_MS).toISOString().slice(0, 10)
+
 const diasEntre = (de: string, ate: string) =>
   Math.max(0, Math.round((Date.parse(`${ate}T00:00:00Z`) - Date.parse(`${de}T00:00:00Z`)) / DIA_MS))
 
@@ -146,8 +166,14 @@ function idadeEm(nascimento: string | null, ref: string): number | null {
 
 /** Leitura do relatório "fresca": o robô roda a cada 6 h, das 6h às 22h. */
 const VISTO_RECENTE_MS = 30 * 3_600_000
-/** Sem alta e sem aparecer nos relatórios: ainda internado só dentro das diárias + folga. */
+/** Folga depois do fim das diárias autorizadas. */
 const FOLGA_DIARIAS = 2
+/**
+ * Sem alta: "internado" até N dias depois do último sinal (entrada, prorrogação
+ * com diária, anexo). Na base, internações de até 7 dias quase nunca têm
+ * prorrogação no portal — por isso não dá para cortar antes.
+ */
+const LIMITE_SEM_SINAL_DIAS = 10
 /** Pedido sem internação: "em andamento" até N dias depois da data prevista. */
 const PEDIDO_EM_ABERTO_DIAS = 7
 
@@ -169,13 +195,10 @@ function situacaoDe(
   if (l.data_alta) return 'alta'
   // Evidência atual: apareceu nos relatórios do portal na leitura recente.
   const visto = l.visto_em_relatorio_em ? Date.now() - Date.parse(l.visto_em_relatorio_em) <= VISTO_RECENTE_MS : false
-  if (l.data_internacao) {
-    // "Internado agora" só se foi visto há pouco ou ainda está dentro das
-    // diárias autorizadas. Sem isso é internação antiga cuja alta o hospital
-    // nunca lançou.
-    const dentroDasDiarias = diasEntre(l.data_internacao, hoje) <= Math.max(l.diarias_autorizadas ?? 1, 1) + FOLGA_DIARIAS
-    return visto || dentroDasDiarias ? 'internado' : 'sem_alta'
-  }
+  // Sem alta: provisório — getInternacoesGC decide entre internado, alta
+  // estimada e alta não confirmada (precisa das prorrogações e do TXT). Aparecer
+  // nos relatórios do portal não prova nada: eles listam tudo que está sem alta.
+  if (l.data_internacao) return 'internado'
   // Pedido sem internação: "em andamento" só se o portal ainda o mostra ou se
   // a data prevista é recente. Pedido antigo autorizado e nunca internado
   // (ou que veio do histórico da varredura) não está em andamento.
@@ -212,6 +235,7 @@ type Linha = {
   relacionadas: ItemLista[] | null
   relatorios: string[] | null
   visto_em_relatorio_em: string | null
+  alta_lancada_em: string | null
 }
 
 type Supabase = Awaited<ReturnType<typeof createClient>>
@@ -323,7 +347,7 @@ export async function getInternacoesGC(): Promise<{
     supabase
       .from('gc_manifestacoes')
       .select(
-        'numero, tipo_registro, status_portal, abertura_em, carteirinha, beneficiario_nome, prestador_nome, medico_nome, carater, tipo_internacao, regime, acomodacao, data_prevista, data_internacao, data_alta, tempo_internacao, diarias_solicitadas, diarias_autorizadas, hipotese_diagnostica, indicacao_clinica, motivo_negativa, procedimentos, medicamentos, relacionadas, relatorios, visto_em_relatorio_em',
+        'numero, tipo_registro, status_portal, abertura_em, carteirinha, beneficiario_nome, prestador_nome, medico_nome, carater, tipo_internacao, regime, acomodacao, data_prevista, data_internacao, data_alta, tempo_internacao, diarias_solicitadas, diarias_autorizadas, hipotese_diagnostica, indicacao_clinica, motivo_negativa, procedimentos, medicamentos, relacionadas, relatorios, visto_em_relatorio_em, alta_lancada_em',
       )
       .ilike('tipo_registro', 'interna%')
       .order('abertura_em', { ascending: false })
@@ -412,34 +436,96 @@ export async function getInternacoesGC(): Promise<{
   }
 
   // Negadas/canceladas não aconteceram: não recebem custo nem contam para reinternação.
-  const [fichas, documentos] = await Promise.all([
+  const [fichas, documentos, { data: pror }] = await Promise.all([
     carteirinhasGC(supabase, carteirinhas),
     documentosPorNumero(supabase, linhas.map((l) => l.numero)),
+    // Prorrogações com diária autorizada: sinal de que a pessoa segue internada.
+    // (Complementação sem diária não conta — chega até depois da alta.)
+    supabase
+      .from('gc_manifestacoes')
+      .select('carteirinha, abertura_em, diarias_autorizadas, status_portal')
+      .ilike('tipo_registro', 'prorroga%')
+      .gt('diarias_autorizadas', 0)
+      .limit(5000),
   ])
+  const prorrogacoesPorPessoa = new Map<string, { dia: string; diarias: number }[]>()
+  for (const p of (pror ?? []) as { carteirinha: string | null; abertura_em: string | null; diarias_autorizadas: number | null; status_portal: string | null }[]) {
+    if (!p.carteirinha || !p.abertura_em || /negad|cancel/i.test(p.status_portal ?? '')) continue
+    const lista = prorrogacoesPorPessoa.get(p.carteirinha) ?? []
+    lista.push({ dia: diaSP(p.abertura_em), diarias: p.diarias_autorizadas ?? 0 })
+    prorrogacoesPorPessoa.set(p.carteirinha, lista)
+  }
 
-  const base = linhas
-    .filter((l) => !['negada', 'cancelada'].includes(situacaoDe(l, hoje)))
-    .map((l) => ({
+  const validas = linhas.filter((l) => !['negada', 'cancelada'].includes(situacaoDe(l, hoje)))
+  const base = validas.map((l) => ({
     numero: l.numero,
     carteirinha: l.carteirinha,
     dataInternacao: l.data_internacao,
     dataAlta: l.data_alta,
   }))
   const custos = custoPorInternacao(base, lancamentos)
-  const reint = reinternacoes(base)
 
-  const internacoes = linhas.map((l): InternacaoGC => {
-    const situacao = situacaoDe(l, hoje)
+  // Sinais de que a pessoa segue internada, até a próxima internação dela.
+  const sinais = (l: Linha) => {
+    const entrada = l.data_internacao
+    if (!entrada) return null
+    const proxima = validas
+      .filter((x) => x.carteirinha === l.carteirinha && x.data_internacao && x.data_internacao > entrada)
+      .map((x) => x.data_internacao!)
+      .sort()[0]
+    let ultimo = entrada
+    let fimDiarias = maisDias(entrada, Math.max(l.diarias_autorizadas ?? 1, 1))
+    let n = 0
+    for (const p of (l.carteirinha ? prorrogacoesPorPessoa.get(l.carteirinha) : null) ?? []) {
+      if (p.dia < entrada || (proxima && p.dia >= proxima)) continue
+      n++
+      if (p.dia > ultimo) ultimo = p.dia
+      const fim = maisDias(p.dia, p.diarias)
+      if (fim > fimDiarias) fimDiarias = fim
+    }
+    for (const d of documentos.get(l.numero) ?? []) {
+      const dia = d.recebidoEm ? diaSP(d.recebidoEm) : null
+      if (dia && dia > ultimo) ultimo = dia
+    }
+    return { ultimo, fimDiarias, prorrogacoes: n }
+  }
+
+  const avaliadas = linhas.map((l) => {
+    let situacao = situacaoDe(l, hoje)
+    const s = sinais(l)
+    let dataAltaEstimada: string | null = null
+    if (situacao === 'internado' && s) {
+      const recente = diasEntre(s.ultimo, hoje) <= LIMITE_SEM_SINAL_DIAS || hoje <= maisDias(s.fimDiarias, FOLGA_DIARIAS)
+      const txt = custos.get(l.numero)?.ultimoAtendimento ?? null
+      if (!recente) {
+        if (txt) {
+          situacao = 'alta_estimada'
+          dataAltaEstimada = txt > s.fimDiarias ? txt : s.fimDiarias
+          if (dataAltaEstimada > hoje) dataAltaEstimada = hoje
+        } else situacao = 'sem_alta'
+      }
+    }
+    return { l, situacao, s, dataAltaEstimada }
+  })
+
+  // Reinternação: a alta estimada também conta como alta anterior.
+  const reint = reinternacoes(
+    avaliadas
+      .filter((a) => !['negada', 'cancelada'].includes(a.situacao))
+      .map((a) => ({
+        numero: a.l.numero,
+        carteirinha: a.l.carteirinha,
+        dataInternacao: a.l.data_internacao,
+        dataAlta: a.l.data_alta ?? a.dataAltaEstimada,
+      })),
+  )
+
+  const internacoes = avaliadas.map(({ l, situacao, s, dataAltaEstimada }): InternacaoGC => {
     const cad = l.carteirinha ? cadastro.get(l.carteirinha) : undefined
-    // Sem alta registrada: o "tempo de internação" do portal conta até hoje
+    // Alta não confirmada: o "tempo de internação" do portal conta até hoje
     // e não significa nada — fica sem dias.
-    const dias = l.data_internacao
-      ? l.data_alta
-        ? diasEntre(l.data_internacao, l.data_alta)
-        : situacao === 'internado'
-          ? diasEntre(l.data_internacao, hoje)
-          : null
-      : null
+    const fim = l.data_alta ?? dataAltaEstimada ?? (situacao === 'internado' ? hoje : null)
+    const dias = l.data_internacao && fim ? diasEntre(l.data_internacao, fim) : null
     return {
       numero: l.numero,
       situacao,
@@ -460,6 +546,10 @@ export async function getInternacoesGC(): Promise<{
       dataPrevista: l.data_prevista,
       dataInternacao: l.data_internacao,
       dataAlta: l.data_alta,
+      dataAltaEstimada,
+      altaLancadaEm: l.alta_lancada_em,
+      ultimoSinal: s?.ultimo ?? null,
+      prorrogacoes: s?.prorrogacoes ?? 0,
       dias,
       diariasSolicitadas: l.diarias_solicitadas,
       diariasAutorizadas: l.diarias_autorizadas,

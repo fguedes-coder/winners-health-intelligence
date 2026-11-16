@@ -84,6 +84,10 @@ function resumoInternacao(i: InternacaoGC) {
     acomodacao: i.acomodacao,
     dataInternacao: i.dataInternacao,
     dataAlta: i.dataAlta,
+    dataAltaEstimada: i.dataAltaEstimada,
+    altaLancadaNoPortalEm: i.altaLancadaEm,
+    ultimoSinalDeInternacao: i.ultimoSinal,
+    prorrogacoesComDiaria: i.prorrogacoes,
     dias: i.dias,
     diariasAutorizadas: i.diariasAutorizadas,
     custoPago: i.custoPago,
@@ -163,17 +167,23 @@ export const ferramentas = {
 
   internados_agora: tool({
     description:
-      'Quem está internado neste momento (internação confirmada pelo hospital e sem alta), com hospital, dias internado, caráter, motivo (indicação clínica e procedimentos), perfil e plano.',
+      'Quem está internado neste momento (internação confirmada pelo hospital, sem alta e com sinal recente: entrada, prorrogação com diária ou anexo nos últimos 10 dias), com hospital, dias internado, caráter, motivo, perfil e plano. Traz também as internações com alta NÃO CONFIRMADA (sem alta e sem sinal há mais de 10 dias). Sem alta no portal não é certeza de que a pessoa segue internada: na base, 1 em cada 5 internações nunca teve a alta lançada. Diga isso ao usuário e recomende confirmar com o hospital antes de informar a empresa.',
     inputSchema: z.object({}),
     execute: async () => {
       const { disponivel, internacoes, ultimaColeta: u, hoje } = await getInternacoesGC()
       if (!disponivel) return { disponivel: false }
       const agora = internacoes.filter((i) => i.situacao === 'internado')
       const andamento = internacoes.filter((i) => i.situacao === 'aguardando' || i.situacao === 'em_analise')
+      const naoConfirmadas = internacoes.filter(
+        (i) => i.situacao === 'sem_alta' && (i.dataInternacao ?? '') >= new Date(Date.now() - 120 * 86_400_000).toISOString().slice(0, 10),
+      )
       return {
         hoje,
         ultimaLeitura: u?.quando ?? null,
+        aviso:
+          'Internado = sem alta lançada no portal + sinal recente. Não é confirmação do hospital; para informar a empresa, confirmar antes.',
         internados: agora.map(resumoInternacao),
+        altaNaoConfirmada: naoConfirmadas.map(resumoInternacao),
         solicitacoesEmAndamento: andamento.map(resumoInternacao),
       }
     },

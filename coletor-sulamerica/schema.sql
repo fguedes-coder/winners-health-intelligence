@@ -333,3 +333,22 @@ grant all on public.gc_documentos to service_role;
 -- O robô usa a mesma chave do Claude do "Converse com a Winners"
 -- (supabase/assistente.sql), lida pela service_role.
 grant execute on function public.chave_assistente() to service_role;
+
+-- Alta lançada no portal (16/11/2026) ---------------------------------------
+-- Quando o robô vê a alta aparecer numa internação que estava sem alta. Mede
+-- quanto cada hospital demora para lançar a alta (as que já vieram com alta na
+-- primeira leitura ficam null).
+alter table public.gc_manifestacoes add column if not exists alta_lancada_em timestamptz;
+
+create or replace function public.gc_marca_alta_lancada() returns trigger
+language plpgsql set search_path = '' as $$
+begin
+  if new.data_alta is not null and old.data_alta is null then
+    new.alta_lancada_em := now();
+  end if;
+  return new;
+end $$;
+
+drop trigger if exists gc_marca_alta_lancada on public.gc_manifestacoes;
+create trigger gc_marca_alta_lancada before update of data_alta on public.gc_manifestacoes
+  for each row execute function public.gc_marca_alta_lancada();
