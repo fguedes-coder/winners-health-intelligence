@@ -36,6 +36,8 @@ export type CustoInternacao = {
   competencias: string[]
   /** Valor pago em cada competência (mês de pagamento). */
   porCompetencia: Record<string, number>
+  /** Último dia de atendimento cobrado (AAAA-MM-DD). */
+  ultimoAtendimento: string
 }
 
 /** Custo pago (TXT) de cada internação do Gestão Conectada, por número da manifestação. */
@@ -58,11 +60,20 @@ export function custoPorInternacao(
     .filter((i) => i.carteirinha && i.dataInternacao)
     .sort((a, b) => (a.dataInternacao ?? '').localeCompare(b.dataInternacao ?? ''))
 
-  for (const i of ordenadas) {
+  for (const [k, i] of ordenadas.entries()) {
     const ini = dia(i.dataInternacao!) - FOLGA_DIAS
-    const fim = (i.dataAlta ? dia(i.dataAlta) : dia(i.dataInternacao!) + JANELA_SEM_ALTA_DIAS) + FOLGA_DIAS
+    // Sem alta: até 30 dias, mas nunca entrando na janela da próxima
+    // internação da mesma pessoa (senão a conta dela vinha para esta).
+    const proxima = ordenadas.slice(k + 1).find((x) => x.carteirinha === i.carteirinha && x.dataInternacao! > i.dataInternacao!)
+    const fim = i.dataAlta
+      ? dia(i.dataAlta) + FOLGA_DIAS
+      : Math.min(
+          dia(i.dataInternacao!) + JANELA_SEM_ALTA_DIAS + FOLGA_DIAS,
+          proxima ? dia(proxima.dataInternacao!) - FOLGA_DIAS - 1 : Infinity,
+        )
     let valor = 0
     let n = 0
+    let ultimo = ''
     const comps = new Set<string>()
     const porComp: Record<string, number> = {}
     for (const l of porPessoa.get(i.carteirinha!) ?? []) {
@@ -72,13 +83,14 @@ export function custoPorInternacao(
       usados.add(l)
       valor += l.valorPago
       n++
+      if (l.dataAtendimento!.slice(0, 10) > ultimo) ultimo = l.dataAtendimento!.slice(0, 10)
       if (l.competencia) {
         comps.add(l.competencia)
         porComp[l.competencia] = (porComp[l.competencia] ?? 0) + l.valorPago
       }
     }
     if (n > 0)
-      res.set(i.numero, { valorPago: valor, lancamentos: n, competencias: [...comps].sort(), porCompetencia: porComp })
+      res.set(i.numero, { valorPago: valor, lancamentos: n, competencias: [...comps].sort(), porCompetencia: porComp, ultimoAtendimento: ultimo })
   }
   return res
 }

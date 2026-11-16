@@ -31,7 +31,8 @@ const SITUACAO: Record<SituacaoInternacao, { rotulo: string; variant: 'default' 
   em_analise: { rotulo: 'Em análise', variant: 'neutral' },
   negada: { rotulo: 'Negada', variant: 'destructive' },
   cancelada: { rotulo: 'Cancelada', variant: 'neutral' },
-  sem_alta: { rotulo: 'Sem alta registrada', variant: 'neutral' },
+  sem_alta: { rotulo: 'Alta não confirmada', variant: 'neutral' },
+  alta_estimada: { rotulo: 'Alta estimada (TXT)', variant: 'success' },
   sem_registro: { rotulo: 'Sem internação registrada', variant: 'neutral' },
 }
 
@@ -42,7 +43,8 @@ const FILTROS: { id: 'todas' | SituacaoInternacao; rotulo: string }[] = [
   { id: 'em_analise', rotulo: 'Em análise' },
   { id: 'aguardando', rotulo: 'Aguardando' },
   { id: 'negada', rotulo: 'Negadas' },
-  { id: 'sem_alta', rotulo: 'Sem alta registrada' },
+  { id: 'alta_estimada', rotulo: 'Alta estimada (TXT)' },
+  { id: 'sem_alta', rotulo: 'Alta não confirmada' },
   { id: 'sem_registro', rotulo: 'Sem internação registrada' },
 ]
 
@@ -60,6 +62,12 @@ const mesRotulo = (ym: string) => `${MESES[Number(ym.slice(5, 7)) - 1]}/${ym.sli
 const menosDias = (hoje: string, n: number) =>
   new Date(Date.parse(`${hoje}T00:00:00Z`) - n * 86_400_000).toISOString().slice(0, 10)
 const brl = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 })
+const diaSP = (iso: string) => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date(iso))
+const diasEntre = (de: string, ate: string) =>
+  Math.round((Date.parse(`${ate.slice(0, 10)}T00:00:00Z`) - Date.parse(`${de.slice(0, 10)}T00:00:00Z`)) / 86_400_000)
+/** Dias entre a alta e o momento em que ela apareceu no portal. */
+const atrasoDaAlta = (i: InternacaoGC) =>
+  i.dataAlta && i.altaLancadaEm ? Math.max(0, diasEntre(i.dataAlta, diaSP(i.altaLancadaEm))) : null
 const urgente = (i: InternacaoGC) => /urg|emerg/i.test(i.carater ?? '')
 const cirurgica = (i: InternacaoGC) => /cir[uú]rg/i.test(i.tipoInternacao ?? '')
 const acimaDasDiarias = (i: InternacaoGC) =>
@@ -119,7 +127,14 @@ export function InternacoesClient({
       })
 
     const comCusto = confirmadas.filter((i) => i.custoPago != null)
+    const atrasos = confirmadas.map(atrasoDaAlta).filter((x): x is number => x != null)
     return {
+      // Sem alta e sem sinal há mais de 10 dias — nos últimos 120 dias (as antigas ficam no histórico).
+      naoConfirmadas: internacoes
+        .filter((i) => i.situacao === 'sem_alta' && (i.dataInternacao ?? '') >= menosDias(hoje, 120))
+        .sort((a, b) => (b.dataInternacao ?? '').localeCompare(a.dataInternacao ?? '')),
+      atrasoMedio: atrasos.length ? atrasos.reduce((s, x) => s + x, 0) / atrasos.length : null,
+      atrasos: atrasos.length,
       internados,
       andamento,
       reinternacoes: confirmadas.filter((i) => i.reinternacao),
@@ -219,7 +234,12 @@ export function InternacoesClient({
             <BedDouble className="size-4 text-primary" /> Internados agora
           </CardTitle>
           <CardDescription>
-            Internações confirmadas pelo hospital e ainda sem alta. Dias contados da data de internação até hoje.
+            Internações confirmadas pelo hospital e ainda sem alta, com sinal recente (entrada, prorrogação com diária
+            ou anexo novo nos últimos 10 dias). Dias contados da data de internação até hoje. Sem alta no portal não é
+            certeza: na base, 1 em cada 5 internações nunca teve a alta lançada — confirme com o hospital antes de
+            informar a empresa.
+            {r.atrasoMedio != null &&
+              ` Os hospitais têm lançado a alta, em média, ${r.atrasoMedio.toLocaleString('pt-BR', { maximumFractionDigits: 1 })} dia(s) depois (${r.atrasos} alta(s) acompanhadas).`}
           </CardDescription>
         </CardHeader>
         <CardContent className="px-0">
@@ -230,6 +250,22 @@ export function InternacoesClient({
           )}
         </CardContent>
       </Card>
+
+      {r.naoConfirmadas.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Alta não confirmada</CardTitle>
+            <CardDescription>
+              Sem alta no portal e sem nenhum sinal de que a pessoa segue internada há mais de 10 dias, e a conta ainda
+              não chegou no TXT. O mais provável é que já tenha tido alta e o hospital não lançou — verificar com o
+              hospital. Quando a conta chegar no TXT, passa a &quot;alta estimada&quot;.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="px-0">
+            <TabelaInternacoes lista={r.naoConfirmadas} nome={nome} aberta={aberta} setAberta={setAberta} hoje={hoje} />
+          </CardContent>
+        </Card>
+      )}
 
       {r.andamento.length > 0 && (
         <Card>
@@ -440,7 +476,9 @@ function TabelaInternacoes({
                   <div className="text-muted-foreground">{i.tipoInternacao ?? ''}</div>
                 </TableCell>
                 <TableCell>{i.dataInternacao ? dataBR(i.dataInternacao) : <span className="text-muted-foreground">prev. {dataBR(i.dataPrevista)}</span>}</TableCell>
-                <TableCell>{dataBR(i.dataAlta)}</TableCell>
+                <TableCell>
+                  {i.dataAlta ? dataBR(i.dataAlta) : i.dataAltaEstimada ? `~${dataBR(i.dataAltaEstimada)}` : '—'}
+                </TableCell>
                 <TableCell className={cn('text-right', acimaDasDiarias(i) && 'font-semibold text-destructive')}>
                   {i.dias ?? '—'}
                   {acimaDasDiarias(i) && <AlertTriangle className="ml-1 inline size-3.5" />}
@@ -494,9 +532,27 @@ function Detalhe({ i, hoje }: { i: InternacaoGC; hoje: string }) {
           i.reinternacao ? `sim — ${i.reinternacao.diasDesdeAlta} dia(s) após a alta da manifestação ${i.reinternacao.anterior}` : 'não',
         )}
         {campo(
-          i.situacao === 'internado' ? 'Dias internado (até hoje)' : 'Dias de internação',
+          i.situacao === 'internado' ? 'Dias internado (até hoje)' : i.situacao === 'alta_estimada' ? 'Dias de internação (estimados)' : 'Dias de internação',
           i.dias != null ? `${i.dias}${i.situacao === 'internado' ? ` (em ${dataBR(hoje)})` : ''}` : null,
         )}
+        {i.dataInternacao &&
+          campo(
+            'Alta no portal',
+            i.dataAlta
+              ? i.altaLancadaEm
+                ? `${dataBR(i.dataAlta)} — lançada em ${dataHora(i.altaLancadaEm)} (${atrasoDaAlta(i)} dia(s) depois)`
+                : dataBR(i.dataAlta)
+              : 'não lançada',
+          )}
+        {!i.dataAlta &&
+          i.dataInternacao &&
+          campo(
+            'Último sinal de internação',
+            i.ultimoSinal
+              ? `${dataBR(i.ultimoSinal)} · ${i.prorrogacoes} prorrogação(ões) com diária`
+              : null,
+          )}
+        {i.dataAltaEstimada && campo('Alta estimada', `${dataBR(i.dataAltaEstimada)} — último dia cobrado no TXT / fim das diárias`)}
       </dl>
 
       <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
